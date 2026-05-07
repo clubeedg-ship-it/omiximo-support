@@ -39,24 +39,31 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     On startup:
       - Validate that the database is reachable
       - Start the background polling task
+      - Start the auto-send executor task (same interval as polling)
+      - Start the SLA monitor auto-escalation task (every 15 minutes)
 
     On shutdown:
-      - Cancel the polling task gracefully
+      - Cancel all background tasks gracefully
     """
     logger.info("Omiximo Support API starting up")
 
-    # Start background polling task
+    # Start all background tasks
     polling_task = asyncio.create_task(_polling_loop(), name="mirakl_poller")
+    auto_send_task = asyncio.create_task(_auto_send_loop(), name="auto_send_executor")
+    sla_monitor_task = asyncio.create_task(_sla_monitor_loop(), name="sla_monitor")
 
     yield
 
     # Shutdown
     logger.info("Omiximo Support API shutting down — cancelling background tasks")
-    polling_task.cancel()
-    try:
-        await polling_task
-    except asyncio.CancelledError:
-        logger.info("Background polling task cancelled cleanly")
+    for task in (polling_task, auto_send_task, sla_monitor_task):
+        task.cancel()
+    for task in (polling_task, auto_send_task, sla_monitor_task):
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    logger.info("All background tasks cancelled cleanly")
 
 
 async def _polling_loop() -> None:
@@ -91,6 +98,60 @@ async def _polling_loop() -> None:
         except Exception as exc:
             logger.exception("Polling loop encountered an unhandled error: %s", exc)
             # Continue polling after unexpected errors
+
+
+async def _auto_send_loop() -> None:
+    """Background task: execute auto-send for eligible GREEN threads.
+
+    Runs at the same cadence as the polling loop so that newly classified
+    GREEN threads are dispatched promptly after each collection run.
+    """
+    from app.database import AsyncSessionLocal
+    from app.services.auto_send import AutoSendExecutor
+
+    executor = AutoSendExecutor()
+
+    while True:
+        try:
+            await asyncio.sleep(settings.MIRAKL_POLL_INTERVAL_SECONDS)
+            logger.info("Auto-send: starting execution run")
+            async with AsyncSessionLocal() as db:
+                report = await executor.execute_auto_sends(db)
+                logger.info(
+                    "Auto-send: sent=%d failed=%d skipped=%d",
+                    report.sent,
+                    report.failed,
+                    report.skipped,
+                )
+        except asyncio.CancelledError:
+            logger.info("Auto-send loop received cancellation signal")
+            raise
+        except Exception as exc:
+            logger.exception("Auto-send loop encountered an unhandled error: %s", exc)
+
+
+async def _sla_monitor_loop() -> None:
+    """Background task: auto-escalate SLA-overdue threads every 15 minutes."""
+    from app.database import AsyncSessionLocal
+    from app.services.sla_monitor import SLAMonitor
+
+    monitor = SLAMonitor()
+
+    while True:
+        try:
+            await asyncio.sleep(900)  # 15 minutes
+            logger.info("SLA monitor: checking for overdue threads")
+            async with AsyncSessionLocal() as db:
+                escalated = await monitor.auto_escalate_overdue(db)
+                if escalated:
+                    logger.warning("SLA monitor: auto-escalated %d thread(s)", escalated)
+                else:
+                    logger.info("SLA monitor: no overdue threads found")
+        except asyncio.CancelledError:
+            logger.info("SLA monitor loop received cancellation signal")
+            raise
+        except Exception as exc:
+            logger.exception("SLA monitor loop encountered an unhandled error: %s", exc)
 
 
 def create_app() -> FastAPI:

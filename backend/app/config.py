@@ -35,9 +35,10 @@ class Settings(BaseSettings):
     LLM_API_BASE_URL: str = "https://api.openai.com/v1"
 
     # ------------------------------------------------------------------ #
-    # Mirakl polling                                                       #
+    # Mirakl polling / webhooks                                           #
     # ------------------------------------------------------------------ #
     MIRAKL_POLL_INTERVAL_SECONDS: int = 300  # 5 minutes
+    MIRAKL_WEBHOOK_SECRET: str = ""  # Optional; leave empty to skip validation
 
     # ------------------------------------------------------------------ #
     # CORS                                                                 #
