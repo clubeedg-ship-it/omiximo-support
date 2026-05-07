@@ -3,11 +3,19 @@ import type { RiskLevel } from '@/lib/types'
 import { getRiskLevelLabel } from '@/lib/utils'
 
 interface RiskBadgeProps {
-  risk: RiskLevel
+  risk: RiskLevel | null
   className?: string
 }
 
 export function RiskBadge({ risk, className }: RiskBadgeProps) {
+  if (!risk) {
+    return (
+      <Badge variant="secondary" className={className}>
+        Unknown
+      </Badge>
+    )
+  }
+
   const variantMap = {
     GREEN: 'green',
     ORANGE: 'orange',

@@ -41,12 +41,12 @@ export function MessagePanel({ thread }: MessagePanelProps) {
           <MetaItem
             icon={<Tag className="h-3.5 w-3.5" />}
             label="Category"
-            value={thread.category}
+            value={thread.category ?? '—'}
           />
           <MetaItem
             icon={<Globe className="h-3.5 w-3.5" />}
             label="Language"
-            value={getLanguageLabel(thread.customer_language)}
+            value={thread.customer_language ? getLanguageLabel(thread.customer_language) : '—'}
           />
           <MetaItem
             icon={<Globe className="h-3.5 w-3.5" />}

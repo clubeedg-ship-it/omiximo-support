@@ -5,10 +5,10 @@ import type { Thread } from '@/lib/types'
 
 function makeThread(overrides: Partial<Thread>): Thread {
   return {
-    id: 1,
+    id: '00000000-0000-0000-0000-000000000001',
     mirakl_thread_id: 'thr-1',
     mirakl_order_id: 'ORD-001',
-    marketplace_account_id: 1,
+    marketplace_account_id: '00000000-0000-0000-0000-000000000001',
     customer_language: 'en',
     category: 'delivery',
     risk_level: 'GREEN',
@@ -18,7 +18,7 @@ function makeThread(overrides: Partial<Thread>): Thread {
     drafted_response: null,
     tracking_status: null,
     invoice_status: null,
-    response_deadline: null,
+    response_deadline: new Date().toISOString(),
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     ...overrides,
@@ -47,8 +47,8 @@ describe('StatsBar', () => {
   it('counts green threads correctly', () => {
     const threads = [
       makeThread({ risk_level: 'GREEN' }),
-      makeThread({ id: 2, risk_level: 'ORANGE' }),
-      makeThread({ id: 3, risk_level: 'RED' }),
+      makeThread({ id: '00000000-0000-0000-0000-000000000002', risk_level: 'ORANGE' }),
+      makeThread({ id: '00000000-0000-0000-0000-000000000003', risk_level: 'RED' }),
     ]
     render(<StatsBar threads={threads} isLoading={false} />)
     // Green count should be 1

@@ -10,57 +10,61 @@ export type ThreadStatus =
 export type Language = 'nl' | 'en' | 'fr' | 'de'
 
 export interface MarketplaceAccount {
-  id: number
+  id: string
   marketplace: string
   shop_id: string
   base_url: string
   sla_hours: number
   template_set: string
   is_active: boolean
+  created_at: string
+  updated_at: string
 }
 
 export interface Thread {
-  id: number
+  id: string
   mirakl_thread_id: string
   mirakl_order_id: string
-  marketplace_account_id: number
+  marketplace_account_id: string
   marketplace_account?: MarketplaceAccount
-  customer_language: Language
-  category: string
-  risk_level: RiskLevel
+  customer_language: Language | null
+  category: string | null
+  risk_level: RiskLevel | null
   status: ThreadStatus
   operator_required: boolean
   customer_message: string
   drafted_response: string | null
   tracking_status: string | null
   invoice_status: string | null
-  response_deadline: string | null
+  response_deadline: string
   created_at: string
   updated_at: string
 }
 
 export interface Template {
-  id: number
-  marketplace_account_id: number | null
+  id: string
+  marketplace_account_id: string | null
   category: string
   language: Language
   template_body: string
   is_active: boolean
+  created_at: string
+  updated_at: string
 }
 
 export interface AuditLog {
-  id: number
-  thread_id: number
+  id: string
+  thread_id: string | null
   action: string
   actor: string
-  detail_json: Record<string, unknown>
+  detail_json: Record<string, unknown> | null
   created_at: string
 }
 
 export interface ThreadFilters {
   risk_level?: RiskLevel | ''
   status?: ThreadStatus | ''
-  marketplace_account_id?: number | ''
+  marketplace_account_id?: string | ''
   search?: string
 }
 
@@ -72,11 +76,13 @@ export interface ThreadsResponse {
 }
 
 export interface ApprovePayload {
-  drafted_response: string
+  actor: string
+  drafted_response_override?: string | null
 }
 
 export interface EscalatePayload {
-  reason?: string
+  actor: string
+  reason: string
 }
 
 export interface SLAAlert {
@@ -88,7 +94,7 @@ export interface SLAAlert {
 
 export interface DataAlert {
   thread_id: string
-  alert_type: 'missing_tracking' | 'missing_invoice'
+  alert_type: string
   message: string
   created_at: string
 }
@@ -102,8 +108,8 @@ export interface AlertsResponse {
 
 export interface ReportSummary {
   total_threads: number
-  by_risk_level: { green: number; orange: number; red: number }
-  by_status: { pending: number; approved: number; sent_auto: number; escalated: number; failed: number }
+  by_risk_level: Record<string, number>
+  by_status: Record<string, number>
   avg_response_time_hours: number
   auto_reply_rate: number
   sla_compliance_rate: number
@@ -120,23 +126,24 @@ export interface TimelineEntry {
 }
 
 export interface ReportTimeline {
-  entries: TimelineEntry[]
+  granularity: string
+  points: TimelineEntry[]
 }
 
 export interface ReportParams {
-  marketplace_account_id?: number | ''
+  marketplace_account_id?: string | ''
   days?: number
 }
 
 export interface ClassificationFlag {
   id: string
   thread_id: string
-  original_category: string
-  original_risk_level: RiskLevel
-  original_language: Language
+  original_category: string | null
+  original_risk_level: string | null
+  original_language: string | null
   correct_category: string
-  correct_risk_level: RiskLevel
-  correct_language: Language
+  correct_risk_level: string
+  correct_language: string
   reason: string
   actor: string
   resolution: 'accepted' | 'rejected' | null
@@ -162,10 +169,11 @@ export interface TemplateOverride {
   id: string
   marketplace_account_id: string
   category: string
-  language: Language
+  language: string
   template_body: string
   is_active: boolean
   created_at: string
+  updated_at: string
 }
 
 export interface ClassificationFlagsParams {
@@ -186,5 +194,4 @@ export interface CreateTemplateOverrideRequest {
   category: string
   language: Language
   template_body: string
-  is_active?: boolean
 }

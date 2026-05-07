@@ -3,7 +3,6 @@ import type {
   ThreadsResponse,
   MarketplaceAccount,
   Template,
-  AuditLog,
   ThreadFilters,
   ApprovePayload,
   EscalatePayload,
@@ -40,6 +39,11 @@ async function request<T>(
     throw new Error(`API error ${response.status}: ${text}`)
   }
 
+  // 204 No Content — return undefined cast to T
+  if (response.status === 204) {
+    return undefined as unknown as T
+  }
+
   return response.json() as Promise<T>
 }
 
@@ -62,52 +66,47 @@ export async function fetchThreads(
     ...(filters.risk_level ? { risk_level: filters.risk_level } : {}),
     ...(filters.status ? { status: filters.status } : {}),
     ...(filters.marketplace_account_id ? { marketplace_account_id: filters.marketplace_account_id } : {}),
-    ...(filters.search ? { search: filters.search } : {}),
     page,
     page_size: pageSize,
   })
   return request<ThreadsResponse>(`/api/v1/threads${qs}`)
 }
 
-export async function fetchThread(id: number): Promise<Thread> {
+export async function fetchThread(id: string): Promise<Thread> {
   return request<Thread>(`/api/v1/threads/${id}`)
 }
 
 export async function approveThread(
-  id: number,
+  id: string,
   payload: ApprovePayload,
 ): Promise<Thread> {
   return request<Thread>(`/api/v1/threads/${id}/approve`, {
-    method: 'POST',
+    method: 'PUT',
     body: JSON.stringify(payload),
   })
 }
 
 export async function escalateThread(
-  id: number,
-  payload: EscalatePayload = {},
+  id: string,
+  payload: EscalatePayload,
 ): Promise<Thread> {
   return request<Thread>(`/api/v1/threads/${id}/escalate`, {
-    method: 'POST',
+    method: 'PUT',
     body: JSON.stringify(payload),
   })
 }
 
 export async function fetchMarketplaces(): Promise<MarketplaceAccount[]> {
-  return request<MarketplaceAccount[]>('/api/v1/marketplaces')
+  return request<MarketplaceAccount[]>('/api/v1/marketplace-accounts')
 }
 
 export async function fetchTemplates(
-  marketplaceAccountId?: number,
+  marketplaceAccountId?: string,
 ): Promise<Template[]> {
   const qs = marketplaceAccountId
     ? buildQueryString({ marketplace_account_id: marketplaceAccountId })
     : ''
   return request<Template[]>(`/api/v1/templates${qs}`)
-}
-
-export async function fetchAuditLogs(threadId: number): Promise<AuditLog[]> {
-  return request<AuditLog[]>(`/api/v1/threads/${threadId}/audit`)
 }
 
 export async function fetchAlerts(): Promise<AlertsResponse> {
@@ -134,7 +133,7 @@ export async function flagMisclassification(
   threadId: string,
   data: FlagMisclassificationRequest,
 ): Promise<ClassificationFlag> {
-  return request<ClassificationFlag>(`/api/v1/threads/${threadId}/flag-classification`, {
+  return request<ClassificationFlag>(`/api/v1/threads/${threadId}/flag-misclassification`, {
     method: 'POST',
     body: JSON.stringify(data),
   })
@@ -148,15 +147,15 @@ export async function fetchClassificationFlags(
     ...(params.page !== undefined ? { page: params.page } : {}),
     ...(params.page_size !== undefined ? { page_size: params.page_size } : {}),
   })
-  return request<ClassificationFlagsResponse>(`/api/v1/classification-flags${qs}`)
+  return request<ClassificationFlagsResponse>(`/api/v1/classification/flags${qs}`)
 }
 
 export async function resolveFlag(
   flagId: string,
   data: ResolveFlagRequest,
 ): Promise<ClassificationFlag> {
-  return request<ClassificationFlag>(`/api/v1/classification-flags/${flagId}/resolve`, {
-    method: 'POST',
+  return request<ClassificationFlag>(`/api/v1/classification/flags/${flagId}/resolve`, {
+    method: 'PUT',
     body: JSON.stringify(data),
   })
 }
@@ -164,21 +163,20 @@ export async function resolveFlag(
 export async function fetchTemplateOverrides(
   marketplaceAccountId: string,
 ): Promise<TemplateOverride[]> {
-  const qs = buildQueryString({ marketplace_account_id: marketplaceAccountId })
-  return request<TemplateOverride[]>(`/api/v1/template-overrides${qs}`)
+  return request<TemplateOverride[]>(`/api/v1/templates/overrides/${marketplaceAccountId}`)
 }
 
 export async function createTemplateOverride(
   data: CreateTemplateOverrideRequest,
 ): Promise<TemplateOverride> {
-  return request<TemplateOverride>('/api/v1/template-overrides', {
+  return request<TemplateOverride>('/api/v1/templates/override', {
     method: 'POST',
     body: JSON.stringify(data),
   })
 }
 
 export async function deleteTemplateOverride(id: string): Promise<void> {
-  return request<void>(`/api/v1/template-overrides/${id}`, {
+  return request<void>(`/api/v1/templates/overrides/${id}`, {
     method: 'DELETE',
   })
 }

@@ -16,7 +16,7 @@ export function DashboardPage() {
   const [filters, setFilters] = useState<ThreadFilters>({
     risk_level: '',
     status: 'PENDING_REVIEW',
-    marketplace_account_id: initialMarketplace ? Number(initialMarketplace) : '',
+    marketplace_account_id: initialMarketplace ?? '',
     search: '',
   })
 

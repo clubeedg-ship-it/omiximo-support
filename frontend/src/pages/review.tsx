@@ -7,11 +7,11 @@ import { useThread } from '@/hooks/use-thread'
 export function ReviewPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const threadId = id ? parseInt(id, 10) : null
+  const threadId = id ?? null
 
   const { data: thread, isLoading, isError, error, refetch } = useThread(threadId)
 
-  if (!id || isNaN(Number(id))) {
+  if (!id) {
     return (
       <div className="flex flex-col items-center justify-center py-24 text-center">
         <AlertCircle className="mb-4 h-10 w-10 text-rose-400" aria-hidden="true" />

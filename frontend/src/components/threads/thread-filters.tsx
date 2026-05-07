@@ -33,7 +33,7 @@ export function ThreadFiltersBar({ filters, marketplaces, onChange }: ThreadFilt
 
   const handleMarketplaceChange = useCallback(
     (value: string) => {
-      onChange({ ...filters, marketplace_account_id: value === 'ALL' ? '' : Number(value) })
+      onChange({ ...filters, marketplace_account_id: value === 'ALL' ? '' : value })
     },
     [filters, onChange],
   )
@@ -92,7 +92,7 @@ export function ThreadFiltersBar({ filters, marketplaces, onChange }: ThreadFilt
 
       {marketplaces.length > 0 && (
         <Select
-          value={filters.marketplace_account_id ? String(filters.marketplace_account_id) : 'ALL'}
+          value={filters.marketplace_account_id ? filters.marketplace_account_id : 'ALL'}
           onValueChange={handleMarketplaceChange}
         >
           <SelectTrigger className="w-[160px]" aria-label="Filter by marketplace">
@@ -101,7 +101,7 @@ export function ThreadFiltersBar({ filters, marketplaces, onChange }: ThreadFilt
           <SelectContent>
             <SelectItem value="ALL">All marketplaces</SelectItem>
             {marketplaces.map((mp) => (
-              <SelectItem key={mp.id} value={String(mp.id)}>
+              <SelectItem key={mp.id} value={mp.id}>
                 {mp.marketplace}
               </SelectItem>
             ))}

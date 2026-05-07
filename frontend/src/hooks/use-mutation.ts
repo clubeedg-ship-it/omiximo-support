@@ -3,7 +3,7 @@ import { approveThread, escalateThread } from '@/lib/api'
 import { toast } from 'sonner'
 import type { ApprovePayload, EscalatePayload } from '@/lib/types'
 
-export function useApproveThread(threadId: number) {
+export function useApproveThread(threadId: string) {
   const queryClient = useQueryClient()
 
   return useMutation({
@@ -19,7 +19,7 @@ export function useApproveThread(threadId: number) {
   })
 }
 
-export function useEscalateThread(threadId: number) {
+export function useEscalateThread(threadId: string) {
   const queryClient = useQueryClient()
 
   return useMutation({

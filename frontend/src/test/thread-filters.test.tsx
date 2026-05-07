@@ -12,8 +12,8 @@ const defaultFilters: ThreadFilters = {
 }
 
 const mockMarketplaces: MarketplaceAccount[] = [
-  { id: 1, marketplace: 'MediaMarkt', shop_id: 'mm-1', base_url: '', sla_hours: 24, template_set: 'default', is_active: true },
-  { id: 2, marketplace: 'Boulanger', shop_id: 'bl-1', base_url: '', sla_hours: 48, template_set: 'default', is_active: true },
+  { id: '00000000-0000-0000-0000-000000000001', marketplace: 'MediaMarkt', shop_id: 'mm-1', base_url: '', sla_hours: 24, template_set: 'default', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: '00000000-0000-0000-0000-000000000002', marketplace: 'Boulanger', shop_id: 'bl-1', base_url: '', sla_hours: 48, template_set: 'default', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
 ]
 
 describe('ThreadFiltersBar', () => {

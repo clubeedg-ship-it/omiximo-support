@@ -370,7 +370,7 @@ const DAY_OPTIONS = [
 
 export function ReportsPage() {
   const [days, setDays] = useState<number>(7)
-  const [marketplaceId, setMarketplaceId] = useState<number | ''>('')
+  const [marketplaceId, setMarketplaceId] = useState<string | ''>('')
 
   const { data: marketplaces = [] } = useMarketplaces()
 
@@ -429,8 +429,8 @@ export function ReportsPage() {
         <div className="flex flex-wrap items-center gap-3">
           {marketplaces.length > 0 && (
             <Select
-              value={marketplaceId === '' ? 'ALL' : String(marketplaceId)}
-              onValueChange={(v) => { setMarketplaceId(v === 'ALL' ? '' : Number(v)) }}
+              value={marketplaceId === '' ? 'ALL' : marketplaceId}
+              onValueChange={(v) => { setMarketplaceId(v === 'ALL' ? '' : v) }}
             >
               <SelectTrigger className="h-8 w-[160px] text-xs" aria-label="Filter by marketplace">
                 <SelectValue placeholder="All marketplaces" />
@@ -438,7 +438,7 @@ export function ReportsPage() {
               <SelectContent>
                 <SelectItem value="ALL">All marketplaces</SelectItem>
                 {marketplaces.map((mp) => (
-                  <SelectItem key={mp.id} value={String(mp.id)}>
+                  <SelectItem key={mp.id} value={mp.id}>
                     {mp.marketplace}
                   </SelectItem>
                 ))}
@@ -578,7 +578,7 @@ export function ReportsPage() {
                 ))}
               </div>
             ) : (
-              <TimelineChart entries={timeline.entries} />
+              <TimelineChart entries={timeline.points} />
             )}
           </CardContent>
         </Card>

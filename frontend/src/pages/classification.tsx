@@ -289,7 +289,7 @@ export function ClassificationPage() {
                         {/* Category diff */}
                         <td className="px-4 py-3">
                           <DiffCell
-                            original={flag.original_category}
+                            original={flag.original_category ?? '—'}
                             correct={flag.correct_category}
                           />
                         </td>
@@ -297,7 +297,7 @@ export function ClassificationPage() {
                         {/* Risk level diff */}
                         <td className="px-4 py-3 whitespace-nowrap">
                           <DiffCell
-                            original={flag.original_risk_level}
+                            original={flag.original_risk_level ?? '—'}
                             correct={flag.correct_risk_level}
                           />
                         </td>
@@ -305,7 +305,7 @@ export function ClassificationPage() {
                         {/* Language diff */}
                         <td className="px-4 py-3 whitespace-nowrap">
                           <DiffCell
-                            original={flag.original_language.toUpperCase()}
+                            original={flag.original_language ? flag.original_language.toUpperCase() : '—'}
                             correct={flag.correct_language.toUpperCase()}
                           />
                         </td>

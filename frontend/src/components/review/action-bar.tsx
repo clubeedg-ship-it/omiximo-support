@@ -49,9 +49,9 @@ export function ActionBar({ thread, draftedResponse, onSuccess }: ActionBarProps
   const [escalateReason, setEscalateReason] = useState('')
 
   // Flag form state
-  const [flagCategory, setFlagCategory] = useState<string>(thread.category)
-  const [flagRiskLevel, setFlagRiskLevel] = useState<RiskLevel>(thread.risk_level)
-  const [flagLanguage, setFlagLanguage] = useState<Language>(thread.customer_language)
+  const [flagCategory, setFlagCategory] = useState<string>(thread.category ?? 'general_inquiry')
+  const [flagRiskLevel, setFlagRiskLevel] = useState<RiskLevel>(thread.risk_level ?? 'ORANGE')
+  const [flagLanguage, setFlagLanguage] = useState<Language>(thread.customer_language ?? 'nl')
   const [flagReason, setFlagReason] = useState('')
 
   const approveMutation = useApproveThread(thread.id)
@@ -71,7 +71,7 @@ export function ActionBar({ thread, draftedResponse, onSuccess }: ActionBarProps
 
   const handleApprove = () => {
     approveMutation.mutate(
-      { drafted_response: draftedResponse },
+      { actor: 'admin@omiximo.nl', drafted_response_override: draftedResponse || null },
       {
         onSuccess: () => {
           setShowApproveDialog(false)
@@ -83,7 +83,7 @@ export function ActionBar({ thread, draftedResponse, onSuccess }: ActionBarProps
 
   const handleEscalate = () => {
     escalateMutation.mutate(
-      { reason: escalateReason || undefined },
+      { actor: 'admin@omiximo.nl', reason: escalateReason || 'Manual escalation' },
       {
         onSuccess: () => {
           setShowEscalateDialog(false)
@@ -187,11 +187,11 @@ export function ActionBar({ thread, draftedResponse, onSuccess }: ActionBarProps
             <div className="grid grid-cols-2 gap-3 rounded-md bg-slate-50 p-3 text-xs dark:bg-slate-800">
               <div>
                 <p className="text-slate-500 dark:text-slate-400 mb-0.5">Current category</p>
-                <p className="font-medium text-slate-700 dark:text-slate-300">{thread.category}</p>
+                <p className="font-medium text-slate-700 dark:text-slate-300">{thread.category ?? '—'}</p>
               </div>
               <div>
                 <p className="text-slate-500 dark:text-slate-400 mb-0.5">Current risk level</p>
-                <p className="font-medium text-slate-700 dark:text-slate-300">{thread.risk_level}</p>
+                <p className="font-medium text-slate-700 dark:text-slate-300">{thread.risk_level ?? '—'}</p>
               </div>
             </div>
 
