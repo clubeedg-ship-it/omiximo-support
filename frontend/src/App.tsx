@@ -5,6 +5,7 @@ import { MainLayout } from '@/components/layout/main-layout'
 import { DashboardPage } from '@/pages/dashboard'
 import { ReviewPage } from '@/pages/review'
 import { ReportsPage } from '@/pages/reports'
+import { ClassificationPage } from '@/pages/classification'
 
 function App() {
   return (
@@ -15,6 +16,7 @@ function App() {
             <Route path="/" element={<DashboardPage />} />
             <Route path="/review/:id" element={<ReviewPage />} />
             <Route path="/reports" element={<ReportsPage />} />
+            <Route path="/classification" element={<ClassificationPage />} />
           </Routes>
         </MainLayout>
       </BrowserRouter>

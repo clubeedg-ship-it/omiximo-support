@@ -127,3 +127,64 @@ export interface ReportParams {
   marketplace_account_id?: number | ''
   days?: number
 }
+
+export interface ClassificationFlag {
+  id: string
+  thread_id: string
+  original_category: string
+  original_risk_level: RiskLevel
+  original_language: Language
+  correct_category: string
+  correct_risk_level: RiskLevel
+  correct_language: Language
+  reason: string
+  actor: string
+  resolution: 'accepted' | 'rejected' | null
+  resolved_by: string | null
+  resolved_at: string | null
+  created_at: string
+}
+
+export interface FlagMisclassificationRequest {
+  correct_category: string
+  correct_risk_level: RiskLevel
+  correct_language: Language
+  reason: string
+  actor: string
+}
+
+export interface ResolveFlagRequest {
+  resolution: 'accepted' | 'rejected'
+  actor: string
+}
+
+export interface TemplateOverride {
+  id: string
+  marketplace_account_id: string
+  category: string
+  language: Language
+  template_body: string
+  is_active: boolean
+  created_at: string
+}
+
+export interface ClassificationFlagsParams {
+  reviewed?: boolean
+  page?: number
+  page_size?: number
+}
+
+export interface ClassificationFlagsResponse {
+  items: ClassificationFlag[]
+  total: number
+  page: number
+  page_size: number
+}
+
+export interface CreateTemplateOverrideRequest {
+  marketplace_account_id: string
+  category: string
+  language: Language
+  template_body: string
+  is_active?: boolean
+}

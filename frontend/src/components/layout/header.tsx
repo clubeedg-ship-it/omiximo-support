@@ -1,5 +1,5 @@
 import { Link, useNavigate, useLocation } from 'react-router-dom'
-import { LayoutDashboard, Headset, BarChart2 } from 'lucide-react'
+import { LayoutDashboard, Headset, BarChart2, SlidersHorizontal } from 'lucide-react'
 import {
   Select,
   SelectContent,
@@ -93,6 +93,21 @@ export function Header() {
           >
             <BarChart2 className="h-4 w-4" aria-hidden="true" />
             <span className="hidden sm:inline">Reports</span>
+          </Link>
+
+          <Link
+            to="/classification"
+            className={cn(
+              'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm transition-colors',
+              isActive('/classification')
+                ? 'bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100'
+                : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100',
+            )}
+            aria-label="Go to classification tuning"
+            aria-current={isActive('/classification') ? 'page' : undefined}
+          >
+            <SlidersHorizontal className="h-4 w-4" aria-hidden="true" />
+            <span className="hidden sm:inline">Tuning</span>
           </Link>
         </nav>
       </div>

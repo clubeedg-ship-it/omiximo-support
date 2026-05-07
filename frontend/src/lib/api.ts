@@ -11,6 +11,13 @@ import type {
   ReportSummary,
   ReportTimeline,
   ReportParams,
+  ClassificationFlag,
+  ClassificationFlagsParams,
+  ClassificationFlagsResponse,
+  FlagMisclassificationRequest,
+  ResolveFlagRequest,
+  TemplateOverride,
+  CreateTemplateOverrideRequest,
 } from './types'
 
 const BASE_URL = (import.meta.env['VITE_API_URL'] as string | undefined) ?? 'http://localhost:8000'
@@ -121,4 +128,57 @@ export async function fetchReportTimeline(params: ReportParams = {}): Promise<Re
     ...(params.days ? { days: params.days } : {}),
   })
   return request<ReportTimeline>(`/api/v1/reports/timeline${qs}`)
+}
+
+export async function flagMisclassification(
+  threadId: string,
+  data: FlagMisclassificationRequest,
+): Promise<ClassificationFlag> {
+  return request<ClassificationFlag>(`/api/v1/threads/${threadId}/flag-classification`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}
+
+export async function fetchClassificationFlags(
+  params: ClassificationFlagsParams = {},
+): Promise<ClassificationFlagsResponse> {
+  const qs = buildQueryString({
+    ...(params.reviewed !== undefined ? { reviewed: params.reviewed } : {}),
+    ...(params.page !== undefined ? { page: params.page } : {}),
+    ...(params.page_size !== undefined ? { page_size: params.page_size } : {}),
+  })
+  return request<ClassificationFlagsResponse>(`/api/v1/classification-flags${qs}`)
+}
+
+export async function resolveFlag(
+  flagId: string,
+  data: ResolveFlagRequest,
+): Promise<ClassificationFlag> {
+  return request<ClassificationFlag>(`/api/v1/classification-flags/${flagId}/resolve`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}
+
+export async function fetchTemplateOverrides(
+  marketplaceAccountId: string,
+): Promise<TemplateOverride[]> {
+  const qs = buildQueryString({ marketplace_account_id: marketplaceAccountId })
+  return request<TemplateOverride[]>(`/api/v1/template-overrides${qs}`)
+}
+
+export async function createTemplateOverride(
+  data: CreateTemplateOverrideRequest,
+): Promise<TemplateOverride> {
+  return request<TemplateOverride>('/api/v1/template-overrides', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}
+
+export async function deleteTemplateOverride(id: string): Promise<void> {
+  return request<void>(`/api/v1/template-overrides/${id}`, {
+    method: 'DELETE',
+  })
 }
