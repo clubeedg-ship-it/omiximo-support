@@ -8,6 +8,9 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
+  server: {
+    allowedHosts: ['support.abbamarkt.nl'],
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
