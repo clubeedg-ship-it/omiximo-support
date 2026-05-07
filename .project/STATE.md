@@ -2,7 +2,7 @@
 
 repo: clubeedg-ship-it/omiximo-support
 branch: main
-phase: integration-ready
+phase: all-code-complete
 queue_head: BLOCKED — awaiting Mirakl API credentials + LLM API key
 
 runtime:
@@ -30,6 +30,8 @@ completed:
   - P3.3: Alert banners on dashboard ✓
   - P4.1: Reporting endpoints (summary + timeline) ✓
   - P4.2: Reporting dashboard (charts, no external lib) ✓
+  - P4.3: Marketplace-specific template overrides ✓
+  - P4.4: Classification tuning (flag/resolve workflow + UI) ✓
 
 truths:
   - LLM is a classifier, not a response generator (D1)

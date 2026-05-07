@@ -41,11 +41,11 @@
 |---|---|---|---|---|---|
 | P4.1 | backend | Reporting endpoints | done | P2.2 | — |
 | P4.2 | frontend | Reporting dashboard | done | P4.1 | — |
-| P4.3 | backend | Marketplace-specific template rules | todo | P1.11 | per-marketplace overrides where policy differs |
-| P4.4 | backend | Classification tuning from real data | todo | P2.2 | weekly review: flag misclassifications, adjust prompts |
+| P4.3 | backend | Marketplace-specific template rules | done | P1.11 | — |
+| P4.4 | backend+frontend | Classification tuning from real data | done | P2.2 | — |
 
 Notes:
-- All code is built and tested. System awaits external API credentials to go live.
+- ALL buildable code is complete and tested (224 backend + 41 frontend tests).
+- System awaits: Mirakl API credentials, LLM API key, Cloudflare Tunnel config.
 - P2.4 (Cloudflare Tunnel) is infra config, not code — configure when deploying.
 - P2.5/P2.6 (tracking/invoice connectors) have stub interfaces ready — implement when API access available.
-- P4.3/P4.4 are enhancement tasks for after live operation begins.
