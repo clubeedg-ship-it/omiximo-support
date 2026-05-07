@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 
 from app.api.alerts import router as alerts_router
+from app.api.classification import router as classification_router
 from app.api.health import router as health_router
 from app.api.marketplace_accounts import router as accounts_router
 from app.api.reports import router as reports_router
@@ -22,3 +23,4 @@ api_router.include_router(templates_router)
 api_router.include_router(webhooks_router)
 api_router.include_router(alerts_router)
 api_router.include_router(reports_router)
+api_router.include_router(classification_router)
