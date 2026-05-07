@@ -1,0 +1,15 @@
+node_modules
+__pycache__
+.git
+.env
+.env.local
+.env.*.local
+postgres_data
+dist
+.vite
+.pytest_cache
+.mypy_cache
+.ruff_cache
+*.egg-info
+venv
+.venv
