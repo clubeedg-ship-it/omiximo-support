@@ -4,6 +4,7 @@ import { QueryProvider } from '@/providers/query-provider'
 import { MainLayout } from '@/components/layout/main-layout'
 import { DashboardPage } from '@/pages/dashboard'
 import { ReviewPage } from '@/pages/review'
+import { ReportsPage } from '@/pages/reports'
 
 function App() {
   return (
@@ -13,6 +14,7 @@ function App() {
           <Routes>
             <Route path="/" element={<DashboardPage />} />
             <Route path="/review/:id" element={<ReviewPage />} />
+            <Route path="/reports" element={<ReportsPage />} />
           </Routes>
         </MainLayout>
       </BrowserRouter>

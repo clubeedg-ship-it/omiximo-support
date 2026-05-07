@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { StatsBar } from '@/components/dashboard/stats-bar'
+import { AlertsBanner } from '@/components/dashboard/alerts-banner'
 import { ThreadFiltersBar } from '@/components/threads/thread-filters'
 import { ThreadTable } from '@/components/threads/thread-table'
 import { useThreads, useMarketplaces } from '@/hooks/use-threads'
@@ -65,6 +66,9 @@ export function DashboardPage() {
           Refresh
         </Button>
       </div>
+
+      {/* Alerts */}
+      <AlertsBanner />
 
       {/* Stats */}
       <StatsBar threads={threads} isLoading={isLoading} />

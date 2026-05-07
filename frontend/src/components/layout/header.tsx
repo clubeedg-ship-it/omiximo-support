@@ -1,5 +1,5 @@
-import { Link, useNavigate } from 'react-router-dom'
-import { LayoutDashboard, Headset } from 'lucide-react'
+import { Link, useNavigate, useLocation } from 'react-router-dom'
+import { LayoutDashboard, Headset, BarChart2 } from 'lucide-react'
 import {
   Select,
   SelectContent,
@@ -8,10 +8,14 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useMarketplaces } from '@/hooks/use-threads'
+import { cn } from '@/lib/utils'
 
 export function Header() {
   const navigate = useNavigate()
+  const location = useLocation()
   const { data: marketplaces = [] } = useMarketplaces()
+
+  const isActive = (path: string) => location.pathname === path
 
   const handleMarketplaceFilter = (value: string) => {
     if (value === 'ALL') {
@@ -63,11 +67,32 @@ export function Header() {
 
           <Link
             to="/"
-            className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+            className={cn(
+              'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm transition-colors',
+              isActive('/')
+                ? 'bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100'
+                : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100',
+            )}
             aria-label="Go to dashboard"
+            aria-current={isActive('/') ? 'page' : undefined}
           >
             <LayoutDashboard className="h-4 w-4" aria-hidden="true" />
             <span className="hidden sm:inline">Dashboard</span>
+          </Link>
+
+          <Link
+            to="/reports"
+            className={cn(
+              'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm transition-colors',
+              isActive('/reports')
+                ? 'bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100'
+                : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100',
+            )}
+            aria-label="Go to reports"
+            aria-current={isActive('/reports') ? 'page' : undefined}
+          >
+            <BarChart2 className="h-4 w-4" aria-hidden="true" />
+            <span className="hidden sm:inline">Reports</span>
           </Link>
         </nav>
       </div>

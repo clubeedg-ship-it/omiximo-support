@@ -7,6 +7,10 @@ import type {
   ThreadFilters,
   ApprovePayload,
   EscalatePayload,
+  AlertsResponse,
+  ReportSummary,
+  ReportTimeline,
+  ReportParams,
 } from './types'
 
 const BASE_URL = (import.meta.env['VITE_API_URL'] as string | undefined) ?? 'http://localhost:8000'
@@ -97,4 +101,24 @@ export async function fetchTemplates(
 
 export async function fetchAuditLogs(threadId: number): Promise<AuditLog[]> {
   return request<AuditLog[]>(`/api/v1/threads/${threadId}/audit`)
+}
+
+export async function fetchAlerts(): Promise<AlertsResponse> {
+  return request<AlertsResponse>('/api/v1/alerts')
+}
+
+export async function fetchReportSummary(params: ReportParams = {}): Promise<ReportSummary> {
+  const qs = buildQueryString({
+    ...(params.marketplace_account_id ? { marketplace_account_id: params.marketplace_account_id } : {}),
+    ...(params.days ? { days: params.days } : {}),
+  })
+  return request<ReportSummary>(`/api/v1/reports/summary${qs}`)
+}
+
+export async function fetchReportTimeline(params: ReportParams = {}): Promise<ReportTimeline> {
+  const qs = buildQueryString({
+    ...(params.marketplace_account_id ? { marketplace_account_id: params.marketplace_account_id } : {}),
+    ...(params.days ? { days: params.days } : {}),
+  })
+  return request<ReportTimeline>(`/api/v1/reports/timeline${qs}`)
 }
