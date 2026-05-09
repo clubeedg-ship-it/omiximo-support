@@ -329,6 +329,7 @@ def _build_template_context(
         ),
         "shop_name": account.marketplace,
         "marketplace": account.marketplace,
+        "marketplace_name": account.marketplace,
         "customer_name": (
             order_context.get("customer", {}).get("firstname", "")
             if order_context else ""
