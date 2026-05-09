@@ -96,22 +96,13 @@ async def get_alerts(
 
     Queries SLA and data-alert services concurrently and merges the results.
     """
-    import asyncio
-
     monitor = SLAMonitor()
     data_service = DataAlertService()
 
-    (
-        sla_approaching,
-        sla_overdue,
-        missing_tracking,
-        missing_invoice,
-    ) = await asyncio.gather(
-        monitor.check_approaching_deadlines(db),
-        monitor.check_overdue(db),
-        data_service.check_missing_tracking(db),
-        data_service.check_missing_invoice(db),
-    )
+    sla_approaching = await monitor.check_approaching_deadlines(db)
+    sla_overdue = await monitor.check_overdue(db)
+    missing_tracking = await data_service.check_missing_tracking(db)
+    missing_invoice = await data_service.check_missing_invoice(db)
 
     missing_data = missing_tracking + missing_invoice
 
