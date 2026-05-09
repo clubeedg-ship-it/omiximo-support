@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { CheckCircle, AlertTriangle, Flag, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -19,19 +19,12 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useApproveThread, useEscalateThread } from '@/hooks/use-mutation'
-import { useFlagMisclassification } from '@/hooks/use-classification'
+import {
+  useClassifierCategories,
+  useFlagMisclassification,
+} from '@/hooks/use-classification'
 import type { Thread, RiskLevel, Language } from '@/lib/types'
 import { cn } from '@/lib/utils'
-
-const CATEGORIES = [
-  'tracking_update',
-  'invoice_request',
-  'return_inquiry',
-  'complaint',
-  'defect_report',
-  'general_inquiry',
-  'delivery_confirmation',
-] as const
 
 const RISK_LEVELS: RiskLevel[] = ['GREEN', 'ORANGE', 'RED']
 const LANGUAGES: Language[] = ['nl', 'en', 'fr', 'de']
@@ -57,6 +50,18 @@ export function ActionBar({ thread, draftedResponse, onSuccess }: ActionBarProps
   const approveMutation = useApproveThread(thread.id)
   const escalateMutation = useEscalateThread(thread.id)
   const flagMutation = useFlagMisclassification(String(thread.id))
+  const { data: classifierCategories } = useClassifierCategories()
+
+  const categoryOptions = useMemo(() => {
+    const backendCategories = classifierCategories?.categories ?? []
+    if (backendCategories.length === 0) {
+      return [flagCategory]
+    }
+    if (backendCategories.includes(flagCategory)) {
+      return backendCategories
+    }
+    return [flagCategory, ...backendCategories]
+  }, [classifierCategories, flagCategory])
 
   const canApprove =
     thread.status === 'PENDING_REVIEW' &&
@@ -71,7 +76,7 @@ export function ActionBar({ thread, draftedResponse, onSuccess }: ActionBarProps
 
   const handleApprove = () => {
     approveMutation.mutate(
-      { actor: 'admin@omiximo.nl', drafted_response_override: draftedResponse || null },
+      { drafted_response_override: draftedResponse || null },
       {
         onSuccess: () => {
           setShowApproveDialog(false)
@@ -83,7 +88,7 @@ export function ActionBar({ thread, draftedResponse, onSuccess }: ActionBarProps
 
   const handleEscalate = () => {
     escalateMutation.mutate(
-      { actor: 'admin@omiximo.nl', reason: escalateReason || 'Manual escalation' },
+      { reason: escalateReason || 'Manual escalation' },
       {
         onSuccess: () => {
           setShowEscalateDialog(false)
@@ -102,7 +107,6 @@ export function ActionBar({ thread, draftedResponse, onSuccess }: ActionBarProps
         correct_risk_level: flagRiskLevel,
         correct_language: flagLanguage,
         reason: flagReason,
-        actor: 'admin@omiximo.nl',
       },
       {
         onSuccess: () => {
@@ -202,7 +206,7 @@ export function ActionBar({ thread, draftedResponse, onSuccess }: ActionBarProps
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {CATEGORIES.map((cat) => (
+                  {categoryOptions.map((cat) => (
                     <SelectItem key={cat} value={cat}>
                       {cat}
                     </SelectItem>

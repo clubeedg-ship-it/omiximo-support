@@ -179,6 +179,11 @@ class SupportThread(Base):
         back_populates="thread",
         cascade="all, delete-orphan",
     )
+    classification_flags: Mapped[list["ClassificationFlag"]] = relationship(  # noqa: F821
+        "ClassificationFlag",
+        back_populates="thread",
+        cascade="all, delete-orphan",
+    )
 
     def __repr__(self) -> str:
         return (

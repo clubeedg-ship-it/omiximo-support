@@ -11,6 +11,7 @@ import type {
   ReportTimeline,
   ReportParams,
   ClassificationFlag,
+  ClassifierCategoriesResponse,
   ClassificationFlagsParams,
   ClassificationFlagsResponse,
   FlagMisclassificationRequest,
@@ -18,6 +19,7 @@ import type {
   TemplateOverride,
   CreateTemplateOverrideRequest,
 } from './types'
+import { getApiToken } from './auth'
 
 const BASE_URL = (import.meta.env['VITE_API_URL'] as string | undefined) ?? 'http://localhost:8000'
 
@@ -26,12 +28,19 @@ async function request<T>(
   options?: RequestInit,
 ): Promise<T> {
   const url = `${BASE_URL}${path}`
+  const headers = new Headers(options?.headers)
+  if (options?.body !== undefined && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json')
+  }
+
+  const token = await getApiToken()
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`)
+  }
+
   const response = await fetch(url, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...options?.headers,
-    },
     ...options,
+    headers,
   })
 
   if (!response.ok) {
@@ -66,6 +75,7 @@ export async function fetchThreads(
     ...(filters.risk_level ? { risk_level: filters.risk_level } : {}),
     ...(filters.status ? { status: filters.status } : {}),
     ...(filters.marketplace_account_id ? { marketplace_account_id: filters.marketplace_account_id } : {}),
+    ...(filters.search ? { search: filters.search } : {}),
     page,
     page_size: pageSize,
   })
@@ -148,6 +158,10 @@ export async function fetchClassificationFlags(
     ...(params.page_size !== undefined ? { page_size: params.page_size } : {}),
   })
   return request<ClassificationFlagsResponse>(`/api/v1/classification/flags${qs}`)
+}
+
+export async function fetchClassificationCategories(): Promise<ClassifierCategoriesResponse> {
+  return request<ClassifierCategoriesResponse>('/api/v1/classification/categories')
 }
 
 export async function resolveFlag(

@@ -7,11 +7,25 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from sqlalchemy import select
 
+from app.models.audit_log import AuditLog
 from app.models.support_thread import RiskLevel, SupportThread, ThreadStatus
 
 
 class TestListThreads:
+
+    async def test_protected_route_requires_auth(self, unauthenticated_client):
+        resp = await unauthenticated_client.get("/api/v1/threads")
+        assert resp.status_code == 401
+
+    async def test_authenticated_user_outside_allowlist_gets_403(self, forbidden_client):
+        resp = await forbidden_client.get("/api/v1/threads")
+        assert resp.status_code == 403
+
+    async def test_allowed_authenticated_user_can_access_route(self, client):
+        resp = await client.get("/api/v1/threads")
+        assert resp.status_code == 200
 
     async def test_list_returns_empty_when_no_threads(self, client, db):
         resp = await client.get("/api/v1/threads")
@@ -29,6 +43,7 @@ class TestListThreads:
         item = data["items"][0]
         assert item["mirakl_thread_id"] == sample_thread.mirakl_thread_id
         assert item["status"] == "PENDING_REVIEW"
+        assert item["marketplace_name"] == "MediaMarkt"
 
     async def test_filter_by_risk_level(self, client, db, sample_account):
         """Only threads matching the requested risk_level are returned."""
@@ -121,6 +136,66 @@ class TestListThreads:
         assert data["page"] == 1
         assert data["page_size"] == 1
 
+    async def test_search_by_order_id(self, client, db, sample_account):
+        matching = SupportThread(
+            id=uuid.uuid4(),
+            mirakl_thread_id="MK-SEARCH-ORDER",
+            mirakl_order_id="ORD-ABC-123",
+            marketplace_account_id=sample_account.id,
+            customer_message="Where is my parcel?",
+            status=ThreadStatus.PENDING_REVIEW,
+            operator_required=False,
+            response_deadline=datetime.now(UTC) + timedelta(hours=24),
+        )
+        non_matching = SupportThread(
+            id=uuid.uuid4(),
+            mirakl_thread_id="MK-SEARCH-OTHER",
+            mirakl_order_id="ORD-XYZ-999",
+            marketplace_account_id=sample_account.id,
+            customer_message="Invoice request",
+            status=ThreadStatus.PENDING_REVIEW,
+            operator_required=False,
+            response_deadline=datetime.now(UTC) + timedelta(hours=24),
+        )
+        db.add_all([matching, non_matching])
+        await db.flush()
+
+        resp = await client.get("/api/v1/threads?search=abc-123")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == 1
+        assert data["items"][0]["id"] == str(matching.id)
+
+    async def test_search_by_message_fragment(self, client, db, sample_account):
+        matching = SupportThread(
+            id=uuid.uuid4(),
+            mirakl_thread_id="MK-SEARCH-MESSAGE",
+            mirakl_order_id="ORD-MESSAGE-1",
+            marketplace_account_id=sample_account.id,
+            customer_message="Customer says the package arrived damaged yesterday.",
+            status=ThreadStatus.PENDING_REVIEW,
+            operator_required=False,
+            response_deadline=datetime.now(UTC) + timedelta(hours=24),
+        )
+        non_matching = SupportThread(
+            id=uuid.uuid4(),
+            mirakl_thread_id="MK-SEARCH-MESSAGE-2",
+            mirakl_order_id="ORD-MESSAGE-2",
+            marketplace_account_id=sample_account.id,
+            customer_message="Please cancel my order.",
+            status=ThreadStatus.PENDING_REVIEW,
+            operator_required=False,
+            response_deadline=datetime.now(UTC) + timedelta(hours=24),
+        )
+        db.add_all([matching, non_matching])
+        await db.flush()
+
+        resp = await client.get("/api/v1/threads?search=damaged")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == 1
+        assert data["items"][0]["id"] == str(matching.id)
+
 
 class TestGetThread:
 
@@ -130,6 +205,7 @@ class TestGetThread:
         data = resp.json()
         assert data["id"] == str(sample_thread.id)
         assert data["mirakl_thread_id"] == sample_thread.mirakl_thread_id
+        assert data["marketplace_name"] == "MediaMarkt"
 
     async def test_get_nonexistent_thread_returns_404(self, client):
         resp = await client.get(f"/api/v1/threads/{uuid.uuid4()}")
@@ -152,7 +228,7 @@ class TestApproveThread:
 
             resp = await client.put(
                 f"/api/v1/threads/{classified_green_thread.id}/approve",
-                json={"actor": "admin@omiximo.nl"},
+                json={},
             )
 
         assert resp.status_code == 200
@@ -173,7 +249,6 @@ class TestApproveThread:
             resp = await client.put(
                 f"/api/v1/threads/{classified_green_thread.id}/approve",
                 json={
-                    "actor": "admin@omiximo.nl",
                     "drafted_response_override": override,
                 },
             )
@@ -187,7 +262,7 @@ class TestApproveThread:
     async def test_approve_nonexistent_thread_returns_404(self, client):
         resp = await client.put(
             f"/api/v1/threads/{uuid.uuid4()}/approve",
-            json={"actor": "user@example.com"},
+            json={},
         )
         assert resp.status_code == 404
 
@@ -210,7 +285,7 @@ class TestApproveThread:
 
         resp = await client.put(
             f"/api/v1/threads/{sent_thread.id}/approve",
-            json={"actor": "user@example.com"},
+            json={},
         )
         assert resp.status_code == 409
 
@@ -220,9 +295,65 @@ class TestApproveThread:
         """Approving a thread without a drafted response returns 422."""
         resp = await client.put(
             f"/api/v1/threads/{sample_thread.id}/approve",
-            json={"actor": "user@example.com"},
+            json={},
         )
         assert resp.status_code == 422
+
+    async def test_approve_audit_actor_comes_from_authenticated_user(
+        self, client, db, classified_green_thread
+    ):
+        with patch("app.api.threads.MiraklClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.send_reply = AsyncMock(return_value={})
+            mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            resp = await client.put(
+                f"/api/v1/threads/{classified_green_thread.id}/approve",
+                json={},
+            )
+
+        assert resp.status_code == 200
+
+        result = await db.execute(
+            select(AuditLog).where(
+                AuditLog.thread_id == classified_green_thread.id,
+                AuditLog.action == "human_approved",
+            )
+        )
+        log = result.scalar_one_or_none()
+        assert log is not None
+        assert log.actor == "admin@omiximo.nl"
+
+    async def test_failed_human_send_persists_status_and_audit(
+        self, client, db, classified_green_thread
+    ):
+        with patch("app.api.threads.MiraklClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.send_reply = AsyncMock(side_effect=RuntimeError("mirakl down"))
+            mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            resp = await client.put(
+                f"/api/v1/threads/{classified_green_thread.id}/approve",
+                json={},
+            )
+
+        assert resp.status_code == 502
+
+        await db.refresh(classified_green_thread)
+        assert classified_green_thread.status == ThreadStatus.FAILED
+
+        result = await db.execute(
+            select(AuditLog).where(
+                AuditLog.thread_id == classified_green_thread.id,
+                AuditLog.action == "human_send_failed",
+            )
+        )
+        log = result.scalar_one_or_none()
+        assert log is not None
+        assert log.actor == "admin@omiximo.nl"
+        assert log.detail_json == {"error": "mirakl down"}
 
 
 class TestEscalateThread:
@@ -230,7 +361,7 @@ class TestEscalateThread:
     async def test_escalate_pending_thread(self, client, sample_thread):
         resp = await client.put(
             f"/api/v1/threads/{sample_thread.id}/escalate",
-            json={"actor": "agent@omiximo.nl", "reason": "Complex dispute requiring legal review."},
+            json={"reason": "Complex dispute requiring legal review."},
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -254,14 +385,14 @@ class TestEscalateThread:
 
         resp = await client.put(
             f"/api/v1/threads/{escalated.id}/escalate",
-            json={"actor": "user@example.com", "reason": "Already escalated."},
+            json={"reason": "Already escalated."},
         )
         assert resp.status_code == 409
 
     async def test_escalate_nonexistent_thread_returns_404(self, client):
         resp = await client.put(
             f"/api/v1/threads/{uuid.uuid4()}/escalate",
-            json={"actor": "user@example.com", "reason": "Test."},
+            json={"reason": "Test."},
         )
         assert resp.status_code == 404
 
@@ -269,15 +400,15 @@ class TestEscalateThread:
         """Missing reason field should cause a validation error."""
         resp = await client.put(
             f"/api/v1/threads/{sample_thread.id}/escalate",
-            json={"actor": "user@example.com"},
+            json={},
         )
         assert resp.status_code == 422
 
 
 class TestHealthEndpoint:
 
-    async def test_health_check_returns_ok(self, client):
-        resp = await client.get("/health")
+    async def test_health_check_returns_ok(self, unauthenticated_client):
+        resp = await unauthenticated_client.get("/health")
         assert resp.status_code == 200
         data = resp.json()
         assert "status" in data

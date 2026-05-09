@@ -26,14 +26,12 @@ def _flag_payload(
     correct_risk_level: str = "ORANGE",
     correct_language: str = "nl",
     reason: str = "The classifier said GREEN but this is clearly an ORANGE return.",
-    actor: str = "reviewer@omiximo.nl",
 ) -> dict:
     return {
         "correct_category": correct_category,
         "correct_risk_level": correct_risk_level,
         "correct_language": correct_language,
         "reason": reason,
-        "actor": actor,
     }
 
 
@@ -57,7 +55,6 @@ class TestFlagMisclassification:
             correct_risk_level="RED",
             correct_language="en",
             reason="Not a shipping issue — defective product.",
-            actor="qa@omiximo.nl",
         )
         resp = await client.post(
             f"/api/v1/threads/{classified_green_thread.id}/flag-misclassification",
@@ -70,7 +67,7 @@ class TestFlagMisclassification:
         assert data["correct_risk_level"] == "RED"
         assert data["correct_language"] == "en"
         assert data["reason"] == "Not a shipping issue — defective product."
-        assert data["actor"] == "qa@omiximo.nl"
+        assert data["actor"] == "admin@omiximo.nl"
         assert data["resolution"] is None
         assert data["resolved_by"] is None
         assert data["resolved_at"] is None
@@ -115,7 +112,7 @@ class TestFlagMisclassification:
 
         resp = await client.post(
             f"/api/v1/threads/{classified_green_thread.id}/flag-misclassification",
-            json=_flag_payload(actor="auditor@omiximo.nl"),
+            json=_flag_payload(),
         )
         assert resp.status_code == 201
 
@@ -127,7 +124,7 @@ class TestFlagMisclassification:
         )
         log = result.scalar_one_or_none()
         assert log is not None
-        assert log.actor == "auditor@omiximo.nl"
+        assert log.actor == "admin@omiximo.nl"
 
     async def test_flag_invalid_risk_level_returns_422(self, client, classified_green_thread):
         payload = _flag_payload(correct_risk_level="INVALID")
@@ -157,12 +154,32 @@ class TestFlagMisclassification:
         self, client, classified_green_thread
     ):
         """Multiple flags on the same thread are allowed (different reviewers)."""
-        for actor in ("reviewer1@omiximo.nl", "reviewer2@omiximo.nl"):
+        for i in range(2):
             resp = await client.post(
                 f"/api/v1/threads/{classified_green_thread.id}/flag-misclassification",
-                json=_flag_payload(actor=actor),
+                json=_flag_payload(reason=f"Reason {i}"),
             )
             assert resp.status_code == 201
+
+
+class TestClassifierCategories:
+
+    async def test_returns_backend_classifier_categories(self, client):
+        resp = await client.get("/api/v1/classification/categories")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["categories"] == [
+            "shipping_delay",
+            "missing_parcel",
+            "return_request",
+            "warranty_claim",
+            "defect_report",
+            "invoice_request",
+            "wrong_item",
+            "damaged_item",
+            "order_cancellation",
+            "general_inquiry",
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -273,7 +290,7 @@ class TestListClassificationFlags:
         for i in range(5):
             await client.post(
                 f"/api/v1/threads/{classified_green_thread.id}/flag-misclassification",
-                json=_flag_payload(reason=f"Reason {i}", actor=f"actor{i}@omiximo.nl"),
+                json=_flag_payload(reason=f"Reason {i}"),
             )
 
         resp = await client.get("/api/v1/classification/flags?page=1&page_size=2")
@@ -317,12 +334,12 @@ class TestResolveClassificationFlag:
 
         resp = await client.put(
             f"/api/v1/classification/flags/{flag_id}/resolve",
-            json={"resolution": "accepted", "actor": "manager@omiximo.nl"},
+            json={"resolution": "accepted"},
         )
         assert resp.status_code == 200
         data = resp.json()
         assert data["resolution"] == "accepted"
-        assert data["resolved_by"] == "manager@omiximo.nl"
+        assert data["resolved_by"] == "admin@omiximo.nl"
         assert data["resolved_at"] is not None
 
         # Verify thread was updated
@@ -342,7 +359,7 @@ class TestResolveClassificationFlag:
 
         resp = await client.put(
             f"/api/v1/classification/flags/{flag_id}/resolve",
-            json={"resolution": "rejected", "actor": "manager@omiximo.nl"},
+            json={"resolution": "rejected"},
         )
         assert resp.status_code == 200
         assert resp.json()["resolution"] == "rejected"
@@ -355,7 +372,7 @@ class TestResolveClassificationFlag:
     async def test_resolve_nonexistent_flag_returns_404(self, client):
         resp = await client.put(
             f"/api/v1/classification/flags/{uuid.uuid4()}/resolve",
-            json={"resolution": "accepted", "actor": "manager@omiximo.nl"},
+            json={"resolution": "accepted"},
         )
         assert resp.status_code == 404
 
@@ -368,13 +385,13 @@ class TestResolveClassificationFlag:
         # Resolve once
         await client.put(
             f"/api/v1/classification/flags/{flag_id}/resolve",
-            json={"resolution": "accepted", "actor": "manager@omiximo.nl"},
+            json={"resolution": "accepted"},
         )
 
         # Try to resolve again
         resp = await client.put(
             f"/api/v1/classification/flags/{flag_id}/resolve",
-            json={"resolution": "rejected", "actor": "other@omiximo.nl"},
+            json={"resolution": "rejected"},
         )
         assert resp.status_code == 409
         assert "already been resolved" in resp.json()["detail"].lower()
@@ -385,7 +402,7 @@ class TestResolveClassificationFlag:
         flag = await self._create_flag(client, classified_green_thread.id)
         resp = await client.put(
             f"/api/v1/classification/flags/{flag['id']}/resolve",
-            json={"resolution": "maybe", "actor": "manager@omiximo.nl"},
+            json={"resolution": "maybe"},
         )
         assert resp.status_code == 422
 
@@ -399,7 +416,7 @@ class TestResolveClassificationFlag:
 
         await client.put(
             f"/api/v1/classification/flags/{flag['id']}/resolve",
-            json={"resolution": "accepted", "actor": "resolver@omiximo.nl"},
+            json={"resolution": "accepted"},
         )
 
         result = await db.execute(
@@ -410,5 +427,5 @@ class TestResolveClassificationFlag:
         )
         log = result.scalar_one_or_none()
         assert log is not None
-        assert log.actor == "resolver@omiximo.nl"
+        assert log.actor == "admin@omiximo.nl"
         assert log.detail_json["resolution"] == "accepted"

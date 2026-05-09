@@ -51,7 +51,7 @@ export function MessagePanel({ thread }: MessagePanelProps) {
           <MetaItem
             icon={<Globe className="h-3.5 w-3.5" />}
             label="Marketplace"
-            value={thread.marketplace_account?.marketplace ?? `Account #${thread.marketplace_account_id}`}
+            value={thread.marketplace_name ?? `Account #${thread.marketplace_account_id}`}
           />
         </div>
 

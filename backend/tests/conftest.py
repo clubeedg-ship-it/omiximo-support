@@ -29,6 +29,8 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+from app.auth import CurrentUser, get_authenticated_user, require_admin_user
+from app.config import settings
 from app.database import get_db
 from app.main import app
 from app.models.base import Base
@@ -88,11 +90,59 @@ async def db(engine) -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest_asyncio.fixture
-async def client(db: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
-    """HTTPX AsyncClient wired to the FastAPI app, using the test db session."""
+async def allowed_admin_user() -> CurrentUser:
+    return CurrentUser(
+        user_id="user_test_admin",
+        email="admin@omiximo.nl",
+        claims={"sub": "user_test_admin", "email": "admin@omiximo.nl"},
+    )
+
+
+@pytest_asyncio.fixture
+async def client(
+    db: AsyncSession,
+    allowed_admin_user: CurrentUser,
+) -> AsyncGenerator[AsyncClient, None]:
+    """HTTPX AsyncClient wired to the FastAPI app with auth and commit semantics."""
 
     async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
-        yield db
+        try:
+            yield db
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+
+    async def override_get_authenticated_user() -> CurrentUser:
+        return allowed_admin_user
+
+    old_allowed_admin_emails = settings.ALLOWED_ADMIN_EMAILS
+    old_allowed_email_domain = settings.ALLOWED_EMAIL_DOMAIN
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_authenticated_user] = override_get_authenticated_user
+    settings.ALLOWED_ADMIN_EMAILS = (allowed_admin_user.email,)
+    settings.ALLOWED_EMAIL_DOMAIN = ""
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://testserver",
+    ) as c:
+        yield c
+
+    settings.ALLOWED_ADMIN_EMAILS = old_allowed_admin_emails
+    settings.ALLOWED_EMAIL_DOMAIN = old_allowed_email_domain
+    app.dependency_overrides.clear()
+
+
+@pytest_asyncio.fixture
+async def unauthenticated_client(db: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
+    async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+        try:
+            yield db
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
 
     app.dependency_overrides[get_db] = override_get_db
 
@@ -102,6 +152,41 @@ async def client(db: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     ) as c:
         yield c
 
+    app.dependency_overrides.clear()
+
+
+@pytest_asyncio.fixture
+async def forbidden_client(db: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
+    async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+        try:
+            yield db
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+
+    async def override_get_authenticated_user() -> CurrentUser:
+        return CurrentUser(
+            user_id="user_outsider",
+            email="outsider@example.net",
+            claims={"sub": "user_outsider", "email": "outsider@example.net"},
+        )
+
+    old_allowed_admin_emails = settings.ALLOWED_ADMIN_EMAILS
+    old_allowed_email_domain = settings.ALLOWED_EMAIL_DOMAIN
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_authenticated_user] = override_get_authenticated_user
+    settings.ALLOWED_ADMIN_EMAILS = ("admin@omiximo.nl",)
+    settings.ALLOWED_EMAIL_DOMAIN = "omiximo.nl"
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://testserver",
+    ) as c:
+        yield c
+
+    settings.ALLOWED_ADMIN_EMAILS = old_allowed_admin_emails
+    settings.ALLOWED_EMAIL_DOMAIN = old_allowed_email_domain
     app.dependency_overrides.clear()
 
 

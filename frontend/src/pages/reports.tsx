@@ -201,16 +201,13 @@ function DonutChart({ slices, total }: DonutChartProps) {
     )
   }
 
-  // Build conic-gradient segments
-  let cumulative = 0
   const segments = slices
     .filter((s) => s.value > 0)
-    .map((s) => {
-      const startDeg = cumulative
+    .reduce<Array<DonutSlice & { startDeg: number; endDeg: number }>>((acc, s) => {
+      const startDeg = acc.length === 0 ? 0 : acc[acc.length - 1].endDeg
       const deg = (s.value / total) * 360
-      cumulative += deg
-      return { ...s, startDeg, endDeg: cumulative }
-    })
+      return [...acc, { ...s, startDeg, endDeg: startDeg + deg }]
+    }, [])
 
   const gradient = segments
     .map((s) => `${s.hex} ${s.startDeg}deg ${s.endDeg}deg`)

@@ -26,6 +26,7 @@ export interface Thread {
   mirakl_thread_id: string
   mirakl_order_id: string
   marketplace_account_id: string
+  marketplace_name?: string | null
   marketplace_account?: MarketplaceAccount
   customer_language: Language | null
   category: string | null
@@ -76,12 +77,10 @@ export interface ThreadsResponse {
 }
 
 export interface ApprovePayload {
-  actor: string
   drafted_response_override?: string | null
 }
 
 export interface EscalatePayload {
-  actor: string
   reason: string
 }
 
@@ -157,12 +156,10 @@ export interface FlagMisclassificationRequest {
   correct_risk_level: RiskLevel
   correct_language: Language
   reason: string
-  actor: string
 }
 
 export interface ResolveFlagRequest {
   resolution: 'accepted' | 'rejected'
-  actor: string
 }
 
 export interface TemplateOverride {
@@ -187,6 +184,10 @@ export interface ClassificationFlagsResponse {
   total: number
   page: number
   page_size: number
+}
+
+export interface ClassifierCategoriesResponse {
+  categories: string[]
 }
 
 export interface CreateTemplateOverrideRequest {

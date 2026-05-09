@@ -161,7 +161,7 @@ export function ThreadTable({ threads, isLoading, isError, onRefresh }: ThreadTa
                 </td>
                 <td className="px-4 py-3 whitespace-nowrap">
                   <span className="font-medium text-slate-800 dark:text-slate-200">
-                    {thread.marketplace_account?.marketplace ?? `Account #${thread.marketplace_account_id}`}
+                    {thread.marketplace_name ?? `Account #${thread.marketplace_account_id}`}
                   </span>
                 </td>
                 <td className="px-4 py-3">

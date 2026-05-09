@@ -19,6 +19,7 @@ class ThreadResponse(BaseModel):
     mirakl_thread_id: str
     mirakl_order_id: str
     marketplace_account_id: uuid.UUID
+    marketplace_name: str | None = None
     customer_language: CustomerLanguage | None
     category: str | None
     risk_level: RiskLevel | None
@@ -43,14 +44,8 @@ class ThreadListResponse(BaseModel):
 
 
 class ThreadApproveRequest(BaseModel):
-    """Request body for the approve endpoint.
+    """Request body for the approve endpoint."""
 
-    The actor field identifies the human reviewer (e.g. their user ID or email).
-    An optional override for the drafted_response allows the reviewer to make
-    minor edits before approving.
-    """
-
-    actor: str = Field(..., min_length=1, description="User ID or email of the approver")
     drafted_response_override: str | None = Field(
         default=None,
         description="If provided, replaces the system-drafted response before sending",
@@ -60,7 +55,6 @@ class ThreadApproveRequest(BaseModel):
 class ThreadEscalateRequest(BaseModel):
     """Request body for the escalate endpoint."""
 
-    actor: str = Field(..., min_length=1, description="User ID or email of the escalating user")
     reason: str = Field(
         ...,
         min_length=1,

@@ -156,7 +156,7 @@ export function ClassificationPage() {
   const handleResolve = (flagId: string, resolution: 'accepted' | 'rejected') => {
     resolveMutation.mutate({
       flagId,
-      data: { resolution, actor: 'admin@omiximo.nl' },
+      data: { resolution },
     })
   }
 

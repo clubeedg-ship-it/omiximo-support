@@ -47,8 +47,8 @@ export function ReviewPane({ thread }: ReviewPaneProps) {
           </h1>
           <p className="text-xs text-slate-500 dark:text-slate-400">
             Order {thread.mirakl_order_id}
-            {thread.marketplace_account?.marketplace
-              ? ` · ${thread.marketplace_account.marketplace}`
+            {thread.marketplace_name
+              ? ` · ${thread.marketplace_name}`
               : ''}
           </p>
         </div>

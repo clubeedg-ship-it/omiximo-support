@@ -14,6 +14,10 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      '@clerk/shared/loadClerkJsScript': path.resolve(
+        __dirname,
+        './src/shims/clerk-load-script.ts',
+      ),
     },
   },
   test: {

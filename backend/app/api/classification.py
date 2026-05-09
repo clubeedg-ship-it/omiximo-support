@@ -15,16 +15,19 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth import CurrentUser, require_admin_user
 from app.database import get_db
 from app.models.classification_flag import ClassificationFlag
 from app.models.support_thread import CustomerLanguage, RiskLevel, SupportThread
 from app.schemas.classification import (
+    ClassifierCategoriesResponse,
     ClassificationFlagListResponse,
     ClassificationFlagResponse,
     FlagResolveRequest,
     MisclassificationFlagRequest,
 )
 from app.services.audit import write_audit_log
+from app.services.classifier import CLASSIFIER_CATEGORIES
 
 router = APIRouter(tags=["classification"])
 
@@ -44,6 +47,7 @@ async def flag_misclassification(
     thread_id: uuid.UUID,
     body: MisclassificationFlagRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[CurrentUser, Depends(require_admin_user)],
 ) -> ClassificationFlagResponse:
     """Submit a misclassification flag for a support thread.
 
@@ -69,7 +73,7 @@ async def flag_misclassification(
         correct_risk_level=body.correct_risk_level.value,
         correct_language=body.correct_language.value,
         reason=body.reason,
-        actor=body.actor,
+        actor=current_user.audit_actor,
     )
     db.add(flag)
     await db.flush()
@@ -77,7 +81,7 @@ async def flag_misclassification(
     await write_audit_log(
         db,
         action="misclassification_flagged",
-        actor=body.actor,
+        actor=current_user.audit_actor,
         thread_id=thread_id,
         detail={
             "flag_id": str(flag.id),
@@ -92,6 +96,16 @@ async def flag_misclassification(
     )
 
     return ClassificationFlagResponse.model_validate(flag)
+
+
+@router.get(
+    "/classification/categories",
+    response_model=ClassifierCategoriesResponse,
+    summary="List classifier categories",
+)
+async def list_classifier_categories() -> ClassifierCategoriesResponse:
+    """Expose the backend classifier's well-known categories to the frontend."""
+    return ClassifierCategoriesResponse(categories=list(CLASSIFIER_CATEGORIES))
 
 
 # --------------------------------------------------------------------------- #
@@ -170,6 +184,7 @@ async def resolve_classification_flag(
     flag_id: uuid.UUID,
     body: FlagResolveRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[CurrentUser, Depends(require_admin_user)],
 ) -> ClassificationFlagResponse:
     """Accept or reject a misclassification flag.
 
@@ -199,7 +214,7 @@ async def resolve_classification_flag(
 
     now = datetime.now(UTC)
     flag.resolution = body.resolution
-    flag.resolved_by = body.actor
+    flag.resolved_by = current_user.audit_actor
     flag.resolved_at = now
 
     if body.resolution == "accepted":
@@ -215,7 +230,7 @@ async def resolve_classification_flag(
     await write_audit_log(
         db,
         action="misclassification_resolved",
-        actor=body.actor,
+        actor=current_user.audit_actor,
         thread_id=flag.thread_id,
         detail={
             "flag_id": str(flag_id),

@@ -34,12 +34,6 @@ class MisclassificationFlagRequest(BaseModel):
         max_length=2000,
         description="Human-readable explanation of why the classification was wrong",
     )
-    actor: str = Field(
-        ...,
-        min_length=1,
-        max_length=100,
-        description="User ID or email of the person submitting the flag",
-    )
 
 
 class ClassificationFlagResponse(BaseModel):
@@ -72,16 +66,16 @@ class ClassificationFlagListResponse(BaseModel):
     page_size: int
 
 
+class ClassifierCategoriesResponse(BaseModel):
+    """Classifier categories surfaced to the frontend."""
+
+    categories: list[str]
+
+
 class FlagResolveRequest(BaseModel):
     """Request body for resolving a classification flag."""
 
     resolution: Literal["accepted", "rejected"] = Field(
         ...,
         description="Accept or reject the proposed correction",
-    )
-    actor: str = Field(
-        ...,
-        min_length=1,
-        max_length=100,
-        description="User ID or email of the reviewer resolving the flag",
     )

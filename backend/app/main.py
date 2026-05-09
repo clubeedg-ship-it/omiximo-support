@@ -156,6 +156,8 @@ async def _sla_monitor_loop() -> None:
 
 def create_app() -> FastAPI:
     """Factory function for the FastAPI application instance."""
+    settings.validate_runtime()
+
     app = FastAPI(
         title="Omiximo Support Automation API",
         description=(

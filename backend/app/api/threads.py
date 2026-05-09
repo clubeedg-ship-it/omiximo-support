@@ -11,10 +11,13 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth import CurrentUser, require_admin_user
 from app.database import get_db
+from app.models.marketplace_account import MarketplaceAccount
 from app.models.support_thread import RiskLevel, SupportThread, ThreadStatus
 from app.schemas.thread import (
     ThreadApproveRequest,
@@ -24,7 +27,6 @@ from app.schemas.thread import (
 )
 from app.services.audit import write_audit_log
 from app.services.mirakl_client import MiraklClient
-from app.models.marketplace_account import MarketplaceAccount
 
 router = APIRouter(prefix="/threads", tags=["threads"])
 
@@ -33,8 +35,9 @@ router = APIRouter(prefix="/threads", tags=["threads"])
 async def list_threads(
     db: Annotated[AsyncSession, Depends(get_db)],
     risk_level: RiskLevel | None = Query(default=None),
-    status: ThreadStatus | None = Query(default=None, alias="status"),
+    thread_status: ThreadStatus | None = Query(default=None, alias="status"),
     marketplace_account_id: uuid.UUID | None = Query(default=None),
+    search: str | None = Query(default=None, min_length=1),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
 ) -> ThreadListResponse:
@@ -45,25 +48,35 @@ async def list_threads(
       - status: PENDING_REVIEW | APPROVED | SENT_AUTO | ESCALATED | FAILED
       - marketplace_account_id: UUID of the marketplace account
     """
-    base_stmt = select(SupportThread)
+    filtered_stmt = select(SupportThread)
 
     if risk_level is not None:
-        base_stmt = base_stmt.where(SupportThread.risk_level == risk_level)
-    if status is not None:
-        base_stmt = base_stmt.where(SupportThread.status == status)
+        filtered_stmt = filtered_stmt.where(SupportThread.risk_level == risk_level)
+    if thread_status is not None:
+        filtered_stmt = filtered_stmt.where(SupportThread.status == thread_status)
     if marketplace_account_id is not None:
-        base_stmt = base_stmt.where(
+        filtered_stmt = filtered_stmt.where(
             SupportThread.marketplace_account_id == marketplace_account_id
+        )
+    if search is not None and search.strip():
+        search_term = f"%{search.strip()}%"
+        filtered_stmt = filtered_stmt.where(
+            or_(
+                SupportThread.mirakl_order_id.ilike(search_term),
+                SupportThread.mirakl_thread_id.ilike(search_term),
+                SupportThread.customer_message.ilike(search_term),
+            )
         )
 
     # Count total matching rows
-    count_stmt = select(func.count()).select_from(base_stmt.subquery())
+    count_stmt = select(func.count()).select_from(filtered_stmt.subquery())
     total: int = (await db.execute(count_stmt)).scalar_one()
 
     # Fetch page
     offset = (page - 1) * page_size
     data_stmt = (
-        base_stmt
+        filtered_stmt
+        .options(selectinload(SupportThread.marketplace_account))
         .order_by(SupportThread.response_deadline.asc())
         .offset(offset)
         .limit(page_size)
@@ -71,7 +84,7 @@ async def list_threads(
     rows = list((await db.execute(data_stmt)).scalars().all())
 
     return ThreadListResponse(
-        items=[ThreadResponse.model_validate(r) for r in rows],
+        items=[_serialize_thread(r) for r in rows],
         total=total,
         page=page,
         page_size=page_size,
@@ -85,7 +98,7 @@ async def get_thread(
 ) -> ThreadResponse:
     """Fetch a single support thread by its internal UUID."""
     thread = await _get_thread_or_404(db, thread_id)
-    return ThreadResponse.model_validate(thread)
+    return _serialize_thread(thread)
 
 
 @router.put("/{thread_id}/approve", response_model=ThreadResponse)
@@ -93,6 +106,7 @@ async def approve_thread(
     thread_id: uuid.UUID,
     body: ThreadApproveRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[CurrentUser, Depends(require_admin_user)],
 ) -> ThreadResponse:
     """Approve a drafted response for sending.
 
@@ -128,7 +142,7 @@ async def approve_thread(
     assert effective_response  # guarded above
 
     # Load the associated account to send via Mirakl
-    account = await db.get(MarketplaceAccount, thread.marketplace_account_id)
+    account = thread.marketplace_account
     if account is None:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -148,10 +162,11 @@ async def approve_thread(
         await write_audit_log(
             db,
             action="human_send_failed",
-            actor=body.actor,
+            actor=current_user.audit_actor,
             thread_id=thread.id,
             detail={"error": str(exc)},
         )
+        await db.commit()
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Mirakl send failed: {exc}",
@@ -163,7 +178,7 @@ async def approve_thread(
     await write_audit_log(
         db,
         action="human_approved",
-        actor=body.actor,
+        actor=current_user.audit_actor,
         thread_id=thread.id,
         detail={
             "override_applied": body.drafted_response_override is not None,
@@ -171,7 +186,7 @@ async def approve_thread(
         },
     )
 
-    return ThreadResponse.model_validate(thread)
+    return _serialize_thread(thread)
 
 
 @router.put("/{thread_id}/escalate", response_model=ThreadResponse)
@@ -179,6 +194,7 @@ async def escalate_thread(
     thread_id: uuid.UUID,
     body: ThreadEscalateRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[CurrentUser, Depends(require_admin_user)],
 ) -> ThreadResponse:
     """Escalate a thread for manual handling.
 
@@ -208,12 +224,12 @@ async def escalate_thread(
     await write_audit_log(
         db,
         action="escalated_manual",
-        actor=body.actor,
+        actor=current_user.audit_actor,
         thread_id=thread.id,
         detail={"reason": body.reason},
     )
 
-    return ThreadResponse.model_validate(thread)
+    return _serialize_thread(thread)
 
 
 # --------------------------------------------------------------------------- #
@@ -225,10 +241,27 @@ async def _get_thread_or_404(
     db: AsyncSession,
     thread_id: uuid.UUID,
 ) -> SupportThread:
-    thread = await db.get(SupportThread, thread_id)
+    stmt = (
+        select(SupportThread)
+        .options(selectinload(SupportThread.marketplace_account))
+        .where(SupportThread.id == thread_id)
+    )
+    result = await db.execute(stmt)
+    thread = result.scalar_one_or_none()
     if thread is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Support thread {thread_id} not found.",
         )
     return thread
+
+
+def _serialize_thread(thread: SupportThread) -> ThreadResponse:
+    marketplace_name = (
+        thread.marketplace_account.marketplace
+        if thread.marketplace_account is not None
+        else None
+    )
+    return ThreadResponse.model_validate(thread).model_copy(
+        update={"marketplace_name": marketplace_name}
+    )
