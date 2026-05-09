@@ -367,26 +367,24 @@ class _LegacyMiraklClient:
     ) -> list[dict[str, Any]]:
         self._assert_open()
         params: dict[str, Any] = {
-            "max": page_size,
-            "shop_id": self._account.shop_id,
+            "limit": page_size,
+            "with_messages": "true",
         }
         if only_unanswered:
-            params["waiting_for_response"] = "true"
+            params["entity_type"] = "MMP_ORDER"
 
         all_threads: list[dict[str, Any]] = []
-        offset = 0
 
         while True:
-            params["start_index"] = offset
-            response = await self._raw_request("GET", "/api/messages/threads", params=params)
+            response = await self._raw_request("GET", "/api/inbox/threads", params=params)
             data = response.json()
-            threads: list[dict[str, Any]] = data.get("threads", [])
+            threads: list[dict[str, Any]] = data.get("data", [])
             all_threads.extend(threads)
 
-            total_count: int = data.get("total_count", len(threads))
-            offset += len(threads)
-            if offset >= total_count or not threads:
+            next_token = data.get("next_page_token")
+            if not next_token or not threads:
                 break
+            params["page_token"] = next_token
 
         return all_threads
 
@@ -399,7 +397,7 @@ class _LegacyMiraklClient:
         self._assert_open()
         response = await self._raw_request(
             "POST",
-            f"/api/messages/threads/{thread_id}/reply",
+            f"/api/inbox/threads/{thread_id}/message",
             json={"body": body},
         )
         return response.json()

@@ -265,7 +265,7 @@ class ThreadCollector:
         """
         mirakl_thread_id: str = str(raw.get("id", ""))
 
-        # Extract order ID — Connect puts it in topic or metadata
+        # Extract order ID — M11 format uses entities list
         if mode == "connect":
             mirakl_order_id = (
                 raw.get("topic", {}).get("order_id")
@@ -273,7 +273,12 @@ class ThreadCollector:
                 or str(raw.get("order_id", ""))
             )
         else:
-            mirakl_order_id = str(raw.get("order_id", ""))
+            # M11 format: entities[0].id contains the order ID
+            entities = raw.get("entities", [])
+            if entities:
+                mirakl_order_id = str(entities[0].get("id", ""))
+            else:
+                mirakl_order_id = str(raw.get("order_id", ""))
 
         mirakl_order_id = str(mirakl_order_id)
 
@@ -305,7 +310,11 @@ class ThreadCollector:
             )
 
         # Determine if this is an operator/marketplace message
-        operator_required: bool = raw.get("operator_message", False)
+        # M11: check current_participants for OPERATOR type or if last message is from OPERATOR
+        current_participants = raw.get("current_participants", [])
+        has_operator = any(p.get("type") == "OPERATOR" for p in current_participants)
+        has_customer = any(p.get("type") == "CUSTOMER" for p in current_participants)
+        operator_required: bool = has_operator and not has_customer or raw.get("operator_message", False)
 
         # Compute SLA deadline
         response_deadline = datetime.now(UTC) + timedelta(hours=account.sla_hours)
@@ -352,11 +361,21 @@ class ThreadCollector:
 
 
 def _extract_customer_message(messages: list[dict[str, Any]]) -> str:
-    """Extract the most recent customer-authored message body from the thread."""
+    """Extract the most recent customer-authored message body from the thread.
+
+    M11 format: each message has from.type = CUSTOMER | SHOP_USER | OPERATOR
+    Legacy format: from_operator (bool), author_type (str)
+    """
     customer_msgs = [
         m for m in messages
-        if not m.get("from_operator", False)
-        and m.get("author_type", "buyer") in ("buyer", "customer", "")
+        if (
+            m.get("from", {}).get("type") == "CUSTOMER"
+            or (
+                not m.get("from_operator", False)
+                and m.get("author_type", "buyer") in ("buyer", "customer", "")
+                and m.get("from", {}).get("type", "CUSTOMER") not in ("SHOP_USER", "OPERATOR")
+            )
+        )
     ]
     if customer_msgs:
         return customer_msgs[-1].get("body", "")
