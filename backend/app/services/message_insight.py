@@ -45,6 +45,21 @@ If the message is already written in English, return an empty string "".
 Respond with ONLY the JSON object. No prose, no markdown fences.
 """
 
+_DRAFT_SYSTEM_PROMPT = """\
+You are a multilingual customer support assistant for an e-commerce seller.
+
+Given a drafted response that will be sent to a customer, produce a JSON object \
+with exactly two keys:
+
+1. "summary": 1-2 sentences in English explaining what this response tells \
+the customer — the key commitments, actions promised, and overall tone.
+
+2. "translated_message": Full English translation of the draft. \
+If the draft is already written in English, return an empty string "".
+
+Respond with ONLY the JSON object. No prose, no markdown fences.
+"""
+
 
 @dataclass
 class InsightResult:
@@ -89,12 +104,40 @@ class MessageInsightService:
 
         try:
             user_content = self._build_user_content(customer_message, detected_language)
-            raw_response = await self._call_llm(user_content)
+            raw_response = await self._call_llm(user_content, system_prompt=_SYSTEM_PROMPT)
             return self._parse_response(raw_response)
         except Exception as exc:
             logger.warning(
                 "Message insight generation failed (non-blocking): %s",
                 exc,
+            )
+            return None
+
+    async def summarize_draft(
+        self,
+        drafted_response: str,
+        detected_language: str,
+    ) -> InsightResult | None:
+        """Generate summary and translation for a drafted response.
+
+        Same contract as :meth:`generate_insight` — never raises, returns
+        ``None`` on failure.
+        """
+        if self._mock_mode:
+            return self._mock_draft_insight(drafted_response, detected_language)
+
+        try:
+            user_content = (
+                f"Detected language: {detected_language}\n\n"
+                f"Drafted response:\n{drafted_response}"
+            )
+            raw_response = await self._call_llm(
+                user_content, system_prompt=_DRAFT_SYSTEM_PROMPT,
+            )
+            return self._parse_response(raw_response)
+        except Exception as exc:
+            logger.warning(
+                "Draft insight generation failed (non-blocking): %s", exc,
             )
             return None
 
@@ -108,7 +151,12 @@ class MessageInsightService:
             f"Customer message:\n{customer_message}"
         )
 
-    async def _call_llm(self, user_content: str) -> str:
+    async def _call_llm(
+        self,
+        user_content: str,
+        *,
+        system_prompt: str = _SYSTEM_PROMPT,
+    ) -> str:
         """Make an async HTTP call to the LLM chat completions endpoint.
 
         Returns:
@@ -120,7 +168,7 @@ class MessageInsightService:
         payload = {
             "model": settings.INSIGHT_LLM_MODEL,
             "messages": [
-                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content},
             ],
             "temperature": 0.0,
@@ -209,4 +257,16 @@ class MessageInsightService:
         return InsightResult(
             summary=summary,
             translated_message=translated_message,
+        )
+
+    @staticmethod
+    def _mock_draft_insight(drafted_response: str, detected_language: str) -> InsightResult:
+        if detected_language == "en":
+            return InsightResult(
+                summary="The drafted response acknowledges the customer's inquiry and provides next steps.",
+                translated_message="",
+            )
+        return InsightResult(
+            summary="The drafted response acknowledges the customer's inquiry and provides next steps.",
+            translated_message=f"[Mock English translation of {detected_language} draft]: {drafted_response}",
         )

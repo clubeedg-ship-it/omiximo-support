@@ -285,6 +285,37 @@ async def get_thread_insight(
     )
 
 
+@router.get("/{thread_id}/draft-insight", response_model=InsightResponse)
+async def get_draft_insight(
+    thread_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> InsightResponse:
+    """Summarize and translate the drafted response for a thread.
+
+    Unlike the message insight, draft insight is not cached because the
+    reviewer may edit the draft before approving. Returns null fields when
+    no draft exists or the LLM is unavailable.
+    """
+    thread = await _get_thread_or_404(db, thread_id)
+
+    if not thread.drafted_response:
+        return InsightResponse(summary=None, translated_message=None)
+
+    detected_lang = thread.customer_language.value if thread.customer_language else "en"
+    result = await _insight_service.summarize_draft(
+        drafted_response=thread.drafted_response,
+        detected_language=detected_lang,
+    )
+
+    if result is None:
+        return InsightResponse(summary=None, translated_message=None)
+
+    return InsightResponse(
+        summary=result.summary,
+        translated_message=result.translated_message,
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Helpers                                                                      #
 # --------------------------------------------------------------------------- #

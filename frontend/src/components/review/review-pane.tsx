@@ -65,6 +65,7 @@ export function ReviewPane({ thread }: ReviewPaneProps) {
         {/* Right: draft editor + action bar */}
         <div className="space-y-4" role="region" aria-label="Response draft and actions">
           <DraftEditor
+            threadId={String(thread.id)}
             value={draftedResponse}
             onChange={setDraftedResponse}
             isEditable={isEditable}

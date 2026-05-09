@@ -95,6 +95,10 @@ export async function fetchThreadInsight(id: string): Promise<InsightResponse> {
   return request<InsightResponse>(`/api/v1/threads/${id}/insight`)
 }
 
+export async function fetchDraftInsight(id: string): Promise<InsightResponse> {
+  return request<InsightResponse>(`/api/v1/threads/${id}/draft-insight`)
+}
+
 export async function approveThread(
   id: string,
   payload: ApprovePayload,

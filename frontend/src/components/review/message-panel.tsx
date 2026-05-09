@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import DOMPurify from 'dompurify'
 import { MessageSquare, Globe, Tag, Hash, Sparkles, ChevronRight, ChevronDown, Loader2, AlertCircle } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
@@ -7,6 +8,13 @@ import { StatusBadge } from '@/components/threads/status-badge'
 import type { Thread } from '@/lib/types'
 import { fetchThreadInsight, type InsightResponse } from '@/lib/api'
 import { formatDate, getLanguageLabel } from '@/lib/utils'
+
+function sanitizeHtml(raw: string): string {
+  return DOMPurify.sanitize(raw, {
+    ALLOWED_TAGS: ['br', 'p', 'b', 'strong', 'i', 'em', 'a', 'ul', 'ol', 'li'],
+    ALLOWED_ATTR: ['href'],
+  })
+}
 
 interface MessagePanelProps {
   thread: Thread
@@ -104,7 +112,7 @@ function AiInsightCard({ threadId }: { threadId: string }) {
           {translationOpen && (
             <div id="ai-translation-content">
               <div className="mt-2 border-t border-blue-200 dark:border-blue-700 pt-2">
-                <p className="text-sm leading-relaxed text-blue-700 dark:text-blue-300 bg-blue-100/60 dark:bg-blue-900/40 rounded px-3 py-2">
+                <p className="text-sm leading-relaxed text-blue-700 dark:text-blue-300 bg-blue-100/60 dark:bg-blue-900/40 rounded px-3 py-2 whitespace-pre-wrap">
                   {insight?.translated_message}
                 </p>
               </div>
@@ -168,9 +176,8 @@ export function MessagePanel({ thread }: MessagePanelProps) {
           <blockquote
             className="rounded-md border-l-4 border-slate-200 bg-slate-50 p-4 text-sm leading-relaxed text-slate-800 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-200"
             aria-label="Customer message content"
-          >
-            {thread.customer_message}
-          </blockquote>
+            dangerouslySetInnerHTML={{ __html: sanitizeHtml(thread.customer_message) }}
+          />
         </div>
 
         <AiInsightCard threadId={String(thread.id)} />
