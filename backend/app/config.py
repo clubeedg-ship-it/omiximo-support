@@ -30,9 +30,9 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------ #
     # LLM                                                                  #
     # ------------------------------------------------------------------ #
-    LLM_API_KEY: str = "dev-placeholder-key"
-    LLM_MODEL: str = "gpt-4o-mini"
-    LLM_API_BASE_URL: str = "https://api.openai.com/v1"
+    LLM_API_KEY: str = ""
+    LLM_MODEL: str = "anthropic/claude-sonnet-4"
+    LLM_API_BASE_URL: str = "https://openrouter.ai/api/v1"
 
     # ------------------------------------------------------------------ #
     # Mirakl polling / webhooks                                           #
