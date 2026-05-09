@@ -147,6 +147,16 @@ class SupportThread(Base):
         nullable=True,
         comment="Full English translation of the customer message; NULL or empty when already English",
     )
+    draft_summary: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        comment="1-2 sentence English summary of the drafted response; populated by insight service",
+    )
+    draft_translated: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        comment="Full English translation of the drafted response; NULL or empty when already English",
+    )
     drafted_response: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,

@@ -294,14 +294,21 @@ async def get_draft_insight(
 ) -> InsightResponse:
     """Summarize and translate the drafted response for a thread.
 
-    Unlike the message insight, draft insight is not cached because the
-    reviewer may edit the draft before approving. Returns null fields when
-    no draft exists or the LLM is unavailable.
+    Caches the result in the database. The cache is invalidated when the
+    drafted_response changes (e.g. via translate-draft apply). Returns
+    null fields when no draft exists or the LLM is unavailable.
     """
     thread = await _get_thread_or_404(db, thread_id)
 
     if not thread.drafted_response:
         return InsightResponse(summary=None, translated_message=None)
+
+    cached_summary = getattr(thread, "draft_summary", None)
+    if cached_summary:
+        return InsightResponse(
+            summary=cached_summary,
+            translated_message=getattr(thread, "draft_translated", None) or "",
+        )
 
     detected_lang = thread.customer_language.value if thread.customer_language else "en"
     result = await _insight_service.summarize_draft(
@@ -311,6 +318,15 @@ async def get_draft_insight(
 
     if result is None:
         return InsightResponse(summary=None, translated_message=None)
+
+    try:
+        thread.draft_summary = result.summary
+        thread.draft_translated = result.translated_message
+        thread.updated_at = datetime.now(UTC)
+        await db.commit()
+    except Exception as exc:
+        logger.debug("Could not cache draft insight for thread %s: %s", thread_id, exc)
+        await db.rollback()
 
     return InsightResponse(
         summary=result.summary,
@@ -363,6 +379,13 @@ async def translate_draft(
 
     if result is None:
         return TranslateDraftResponse()
+
+    try:
+        thread.draft_summary = None
+        thread.draft_translated = None
+        await db.commit()
+    except Exception:
+        await db.rollback()
 
     return TranslateDraftResponse(
         translated_text=result.translated_text,
