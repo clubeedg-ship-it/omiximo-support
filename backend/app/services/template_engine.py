@@ -39,6 +39,16 @@ from app.models.support_thread import CustomerLanguage
 
 logger = logging.getLogger(__name__)
 
+_CATEGORY_ALIASES: dict[str, str] = {
+    "shipping_delay": "tracking_update",
+    "missing_parcel": "tracking_update",
+    "return_request": "return_inquiry",
+    "warranty_claim": "defect_report",
+    "damaged_item": "defect_report",
+    "wrong_item": "complaint",
+    "order_cancellation": "complaint",
+}
+
 # Jinja2 environment with StrictUndefined so missing slots surface as errors
 # rather than silently rendering as empty strings.
 _jinja_env = Environment(
@@ -82,9 +92,10 @@ class TemplateEngine:
             TemplateNotFoundError:  No active template found for the given criteria.
             TemplateRenderError:    Jinja2 rendering failed (e.g. missing slot).
         """
+        resolved_category = _CATEGORY_ALIASES.get(category, category)
         template_record = await self._resolve_template(
             db,
-            category=category,
+            category=resolved_category,
             language=language,
             marketplace_account_id=marketplace_account_id,
         )

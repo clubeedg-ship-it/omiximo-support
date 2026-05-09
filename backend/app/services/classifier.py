@@ -30,6 +30,17 @@ from app.models.support_thread import CustomerLanguage, RiskLevel
 
 logger = logging.getLogger(__name__)
 
+CLASSIFIER_CATEGORIES: tuple[str, ...] = (
+    "tracking_update",
+    "invoice_request",
+    "return_inquiry",
+    "complaint",
+    "defect_report",
+    "delivery_confirmation",
+    "general_inquiry",
+)
+_WELL_KNOWN_CATEGORIES = ", ".join(CLASSIFIER_CATEGORIES)
+
 
 @dataclass
 class ClassificationResult:
@@ -46,10 +57,8 @@ You are a customer support classifier for an e-commerce seller on multiple Mirak
 Analyse the customer message and available order context, then respond with a JSON object \
 containing exactly three keys:
 
-1. "category": A concise snake_case label describing the topic. Use one of the well-known \
-categories when applicable: shipping_delay, missing_parcel, return_request, warranty_claim, \
-defect_report, invoice_request, wrong_item, damaged_item, order_cancellation, general_inquiry. \
-Otherwise invent a descriptive snake_case label.
+1. "category": MUST be exactly one of these values: {well_known_categories}. \
+Pick the closest match. Use "general_inquiry" if none fit well.
 
 2. "risk_level": One of "GREEN", "ORANGE", or "RED" based on automation safety:
    - GREEN  = Standard query answerable by template; safe for auto-send after safety checks.
@@ -59,7 +68,7 @@ Otherwise invent a descriptive snake_case label.
 3. "language": The ISO 639-1 code of the customer message. Must be one of: "nl", "en", "fr", "de".
 
 Respond with ONLY the JSON object. No prose, no markdown fences.
-"""
+""".format(well_known_categories=_WELL_KNOWN_CATEGORIES)
 
 
 class MessageClassifier:
