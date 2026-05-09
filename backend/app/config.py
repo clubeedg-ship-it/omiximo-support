@@ -35,6 +35,14 @@ class Settings(BaseSettings):
     LLM_API_BASE_URL: str = "https://openrouter.ai/api/v1"
 
     # ------------------------------------------------------------------ #
+    # Mirakl Connect (centralized OAuth2 API)                             #
+    # ------------------------------------------------------------------ #
+    MIRAKL_CONNECT_CLIENT_ID: str = ""
+    MIRAKL_CONNECT_CLIENT_SECRET: str = ""
+    MIRAKL_CONNECT_SELLER_ID: str = ""
+    MIRAKL_CONNECT_API_URL: str = "https://connect-api.mirakl.net"
+
+    # ------------------------------------------------------------------ #
     # Mirakl polling / webhooks                                           #
     # ------------------------------------------------------------------ #
     MIRAKL_POLL_INTERVAL_SECONDS: int = 300  # 5 minutes

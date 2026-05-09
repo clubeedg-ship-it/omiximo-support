@@ -36,10 +36,13 @@ class MarketplaceAccount(Base):
         nullable=False,
         comment="Seller shop ID within the marketplace",
     )
-    api_key_encrypted: Mapped[str] = mapped_column(
+    api_key_encrypted: Mapped[str | None] = mapped_column(
         String(500),
-        nullable=False,
-        comment="Fernet-encrypted Mirakl API key — never stored in plaintext",
+        nullable=True,
+        comment=(
+            "Fernet-encrypted Mirakl API key — never stored in plaintext. "
+            "NULL when Mirakl Connect OAuth2 is used (api key not required)."
+        ),
     )
     base_url: Mapped[str] = mapped_column(
         String(255),

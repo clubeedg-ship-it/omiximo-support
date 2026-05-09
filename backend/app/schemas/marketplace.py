@@ -11,16 +11,20 @@ from pydantic import BaseModel, ConfigDict, Field
 class MarketplaceAccountCreate(BaseModel):
     """Request body for creating a new marketplace account.
 
-    The api_key is accepted in plaintext and encrypted by the service layer
-    before persistence. It is never returned in responses.
+    ``api_key`` is optional when Mirakl Connect OAuth2 is used — in that case
+    authentication is handled centrally and no per-shop key is required.
+    When provided, the plaintext key is encrypted by the service layer before
+    persistence and is never returned in responses.
     """
 
     marketplace: str = Field(..., min_length=1, max_length=100)
     shop_id: str = Field(..., min_length=1, max_length=100)
-    api_key: str = Field(
-        ...,
-        min_length=1,
-        description="Plaintext Mirakl API key — will be encrypted before storage",
+    api_key: str | None = Field(
+        default=None,
+        description=(
+            "Plaintext Mirakl API key — will be encrypted before storage. "
+            "Optional when Mirakl Connect OAuth2 credentials are configured."
+        ),
     )
     base_url: str = Field(
         ...,

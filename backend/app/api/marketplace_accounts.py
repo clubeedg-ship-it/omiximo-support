@@ -54,9 +54,11 @@ async def create_account(
 ) -> MarketplaceAccountResponse:
     """Create a new marketplace account.
 
-    The plaintext ``api_key`` is encrypted with Fernet before storage.
+    If ``api_key`` is provided it is encrypted with Fernet before storage.
+    When Mirakl Connect OAuth2 is used, ``api_key`` may be omitted entirely —
+    authentication is handled centrally and no per-shop key is required.
     """
-    encrypted_key = encrypt(body.api_key)
+    encrypted_key = encrypt(body.api_key) if body.api_key else None
 
     account = MarketplaceAccount(
         id=uuid.uuid4(),
