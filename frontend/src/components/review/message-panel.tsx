@@ -1,9 +1,11 @@
-import { MessageSquare, Globe, Tag, Hash } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { MessageSquare, Globe, Tag, Hash, Sparkles, ChevronRight, ChevronDown, Loader2, AlertCircle } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { RiskBadge } from '@/components/threads/risk-badge'
 import { StatusBadge } from '@/components/threads/status-badge'
 import type { Thread } from '@/lib/types'
+import { fetchThreadInsight, type InsightResponse } from '@/lib/api'
 import { formatDate, getLanguageLabel } from '@/lib/utils'
 
 interface MessagePanelProps {
@@ -18,6 +20,98 @@ function MetaItem({ icon, label, value }: { icon: React.ReactNode; label: string
         <p className="text-xs text-slate-500 dark:text-slate-400">{label}</p>
         <p className="text-sm font-medium text-slate-800 dark:text-slate-200">{value}</p>
       </div>
+    </div>
+  )
+}
+
+type InsightState =
+  | { status: 'loading' }
+  | { status: 'error' }
+  | { status: 'done'; data: InsightResponse }
+
+function AiInsightCard({ threadId }: { threadId: string }) {
+  const [state, setState] = useState<InsightState>({ status: 'loading' })
+  const [translationOpen, setTranslationOpen] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+
+    fetchThreadInsight(threadId)
+      .then((data) => {
+        if (!cancelled) setState({ status: 'done', data })
+      })
+      .catch(() => {
+        if (!cancelled) setState({ status: 'error' })
+      })
+
+    return () => { cancelled = true }
+  }, [threadId])
+
+  const insight = state.status === 'done' ? state.data : null
+
+  const hasTranslation = Boolean(insight?.translated_message?.trim())
+
+  return (
+    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-3 dark:bg-blue-900/20 dark:border-blue-800">
+      <div className="flex items-center gap-2">
+        <Sparkles className="h-4 w-4 text-blue-500 dark:text-blue-400 shrink-0" aria-hidden="true" />
+        <span className="text-sm font-semibold text-blue-800 dark:text-blue-300">AI Summary</span>
+      </div>
+
+      {state.status === 'loading' && (
+        <div className="flex items-center gap-2 text-sm text-blue-400 dark:text-blue-500">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+          <span>Generating insight...</span>
+        </div>
+      )}
+
+      {state.status === 'error' && (
+        <div className="flex items-center gap-2 text-sm text-slate-400 dark:text-slate-500">
+          <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" />
+          <span>Insight unavailable</span>
+        </div>
+      )}
+
+      {state.status === 'done' && insight?.summary && (
+        <p className="text-sm leading-relaxed text-blue-900 dark:text-blue-200">
+          {insight.summary}
+        </p>
+      )}
+
+      {state.status === 'done' && !insight?.summary && (
+        <p className="text-sm text-slate-400 dark:text-slate-500">
+          No summary available for this message.
+        </p>
+      )}
+
+      {hasTranslation && (
+        <div>
+          <button
+            type="button"
+            onClick={() => setTranslationOpen((prev) => !prev)}
+            className="flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 transition-colors"
+            aria-expanded={translationOpen}
+            aria-controls="ai-translation-content"
+          >
+            {translationOpen ? (
+              <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
+            ) : (
+              <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
+            )}
+            {translationOpen ? 'Hide translation' : 'Show translation'}
+          </button>
+
+          {translationOpen && (
+            <div id="ai-translation-content">
+              <div className="mt-2 border-t border-blue-200 dark:border-blue-700 pt-2">
+                <p className="text-sm leading-relaxed text-blue-700 dark:text-blue-300 bg-blue-100/60 dark:bg-blue-900/40 rounded px-3 py-2">
+                  {insight?.translated_message}
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -78,6 +172,8 @@ export function MessagePanel({ thread }: MessagePanelProps) {
             {thread.customer_message}
           </blockquote>
         </div>
+
+        <AiInsightCard threadId={String(thread.id)} />
       </CardContent>
     </Card>
   )

@@ -86,6 +86,15 @@ export async function fetchThread(id: string): Promise<Thread> {
   return request<Thread>(`/api/v1/threads/${id}`)
 }
 
+export interface InsightResponse {
+  summary: string | null
+  translated_message: string | null
+}
+
+export async function fetchThreadInsight(id: string): Promise<InsightResponse> {
+  return request<InsightResponse>(`/api/v1/threads/${id}/insight`)
+}
+
 export async function approveThread(
   id: string,
   payload: ApprovePayload,

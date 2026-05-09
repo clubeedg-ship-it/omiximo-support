@@ -71,11 +71,11 @@ async def pending_thread(db, pipeline_account) -> SupportThread:
 
 @pytest_asyncio.fixture
 async def shipping_template(db) -> ResponseTemplate:
-    """Global English template for shipping_delay."""
+    """Global English template for tracking_update (resolved from shipping_delay)."""
     template = ResponseTemplate(
         id=uuid.uuid4(),
         marketplace_account_id=None,
-        category="shipping_delay",
+        category="tracking_update",
         language="en",
         template_body=(
             "Dear {{ customer_name or 'customer' }},\n"
@@ -193,11 +193,11 @@ class TestPipelineOrangePath:
         )
         db.add(thread)
 
-        # Create a return_request template
+        # Create a return_inquiry template (resolved from return_request)
         return_template = ResponseTemplate(
             id=uuid.uuid4(),
             marketplace_account_id=None,
-            category="return_request",
+            category="return_inquiry",
             language="en",
             template_body="We have received your return request for order {{ order_id }}.",
             is_active=True,
@@ -244,7 +244,7 @@ class TestPipelineSafetyBlock:
         unsafe_template = ResponseTemplate(
             id=uuid.uuid4(),
             marketplace_account_id=None,
-            category="shipping_delay",
+            category="tracking_update",
             language="en",
             template_body=(
                 "Your order {{ order_id }} is on its way. "

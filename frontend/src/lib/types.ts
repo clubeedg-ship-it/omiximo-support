@@ -35,6 +35,8 @@ export interface Thread {
   operator_required: boolean
   customer_message: string
   drafted_response: string | null
+  message_summary?: string | null
+  translated_message?: string | null
   tracking_status: string | null
   invoice_status: string | null
   response_deadline: string

@@ -6,6 +6,7 @@ All mutating endpoints write to audit_log before returning.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import UTC, datetime
 from typing import Annotated
@@ -20,13 +21,19 @@ from app.database import get_db
 from app.models.marketplace_account import MarketplaceAccount
 from app.models.support_thread import RiskLevel, SupportThread, ThreadStatus
 from app.schemas.thread import (
+    InsightResponse,
     ThreadApproveRequest,
     ThreadEscalateRequest,
     ThreadListResponse,
     ThreadResponse,
 )
 from app.services.audit import write_audit_log
+from app.services.message_insight import MessageInsightService
 from app.services.mirakl_client import MiraklClient
+
+logger = logging.getLogger(__name__)
+
+_insight_service = MessageInsightService()
 
 router = APIRouter(prefix="/threads", tags=["threads"])
 
@@ -232,6 +239,52 @@ async def escalate_thread(
     return _serialize_thread(thread)
 
 
+@router.get("/{thread_id}/insight", response_model=InsightResponse)
+async def get_thread_insight(
+    thread_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> InsightResponse:
+    """Generate or return cached AI insight (summary + translation) for a thread.
+
+    On first call, generates via the configured insight LLM and caches the
+    result in the database.  Subsequent calls return the cached result.
+
+    This endpoint never raises 500 — it returns null fields when the LLM is
+    unavailable or the insight columns have not been migrated yet.
+    """
+    thread = await _get_thread_or_404(db, thread_id)
+
+    cached_summary = getattr(thread, "message_summary", None)
+    if cached_summary:
+        return InsightResponse(
+            summary=cached_summary,
+            translated_message=getattr(thread, "translated_message", None) or "",
+        )
+
+    detected_lang = thread.customer_language.value if thread.customer_language else "en"
+    result = await _insight_service.generate_insight(
+        customer_message=thread.customer_message,
+        detected_language=detected_lang,
+    )
+
+    if result is None:
+        return InsightResponse(summary=None, translated_message=None)
+
+    try:
+        thread.message_summary = result.summary
+        thread.translated_message = result.translated_message
+        thread.updated_at = datetime.now(UTC)
+        await db.commit()
+    except Exception as exc:
+        logger.debug("Could not cache insight for thread %s: %s", thread_id, exc)
+        await db.rollback()
+
+    return InsightResponse(
+        summary=result.summary,
+        translated_message=result.translated_message,
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Helpers                                                                      #
 # --------------------------------------------------------------------------- #
@@ -262,6 +315,7 @@ def _serialize_thread(thread: SupportThread) -> ThreadResponse:
         if thread.marketplace_account is not None
         else None
     )
-    return ThreadResponse.model_validate(thread).model_copy(
-        update={"marketplace_name": marketplace_name}
-    )
+    extras: dict[str, str | None] = {"marketplace_name": marketplace_name}
+    extras["message_summary"] = getattr(thread, "message_summary", None)
+    extras["translated_message"] = getattr(thread, "translated_message", None)
+    return ThreadResponse.model_validate(thread).model_copy(update=extras)

@@ -285,11 +285,11 @@ async def sample_template(
     db: AsyncSession,
     sample_account: MarketplaceAccount,
 ) -> ResponseTemplate:
-    """Insert and return a global shipping_delay template in English."""
+    """Insert and return a global tracking_update template in English."""
     template = ResponseTemplate(
         id=uuid.uuid4(),
         marketplace_account_id=None,  # global
-        category="shipping_delay",
+        category="tracking_update",
         language="en",
         template_body=(
             "Dear {{ customer_name or 'customer' }},\n\n"
@@ -309,11 +309,11 @@ async def nl_template(
     db: AsyncSession,
     sample_account: MarketplaceAccount,
 ) -> ResponseTemplate:
-    """A Dutch shipping_delay template scoped to sample_account."""
+    """A Dutch tracking_update template scoped to sample_account."""
     template = ResponseTemplate(
         id=uuid.uuid4(),
         marketplace_account_id=sample_account.id,
-        category="shipping_delay",
+        category="tracking_update",
         language="nl",
         template_body=(
             "Beste {{ customer_name or 'klant' }},\n\n"

@@ -180,7 +180,7 @@ export function ThreadTable({ threads, isLoading, isError, onRefresh }: ThreadTa
                 </td>
                 <td className="px-4 py-3 max-w-sm">
                   <p className="text-slate-600 dark:text-slate-400 text-xs leading-relaxed">
-                    {truncate(thread.customer_message, 90)}
+                    {thread.message_summary ? truncate(thread.message_summary, 90) : truncate(thread.customer_message, 90)}
                   </p>
                 </td>
                 <td className="px-4 py-3 text-right">

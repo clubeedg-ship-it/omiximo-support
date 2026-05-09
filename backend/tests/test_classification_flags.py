@@ -169,15 +169,12 @@ class TestClassifierCategories:
         assert resp.status_code == 200
         data = resp.json()
         assert data["categories"] == [
-            "shipping_delay",
-            "missing_parcel",
-            "return_request",
-            "warranty_claim",
-            "defect_report",
+            "tracking_update",
             "invoice_request",
-            "wrong_item",
-            "damaged_item",
-            "order_cancellation",
+            "return_inquiry",
+            "complaint",
+            "defect_report",
+            "delivery_confirmation",
             "general_inquiry",
         ]
 

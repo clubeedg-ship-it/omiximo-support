@@ -56,6 +56,7 @@ class Settings(BaseSettings):
     LLM_API_KEY: str = ""
     LLM_MODEL: str = "anthropic/claude-sonnet-4"
     LLM_API_BASE_URL: str = "https://openrouter.ai/api/v1"
+    INSIGHT_LLM_MODEL: str = "google/gemini-2.5-flash"
 
     # ------------------------------------------------------------------ #
     # Mirakl Connect (centralized OAuth2 API)                             #
@@ -76,6 +77,7 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------ #
     CORS_ORIGINS: list[str] = [
         "http://localhost:5173",
+        "http://localhost:5174",
         "http://localhost:3000",
         "https://support.abbamarkt.nl",
         "http://support.abbamarkt.nl",

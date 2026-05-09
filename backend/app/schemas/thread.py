@@ -26,6 +26,8 @@ class ThreadResponse(BaseModel):
     status: ThreadStatus
     operator_required: bool
     customer_message: str
+    message_summary: str | None
+    translated_message: str | None
     drafted_response: str | None
     tracking_status: str | None
     invoice_status: str | None
@@ -41,6 +43,13 @@ class ThreadListResponse(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class InsightResponse(BaseModel):
+    """AI-generated summary and translation for a thread."""
+
+    summary: str | None = None
+    translated_message: str | None = None
 
 
 class ThreadApproveRequest(BaseModel):

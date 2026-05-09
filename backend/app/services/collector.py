@@ -308,6 +308,12 @@ class ThreadCollector:
                 or raw.get("topic", {}).get("subject", "")
                 or ""
             )
+            if not customer_message:
+                logger.warning(
+                    "Empty customer_message for raw thread id=%s — no body, content, "
+                    "or subject could be extracted. Thread will be stored with empty message.",
+                    mirakl_thread_id,
+                )
 
         # Determine if this is an operator/marketplace message
         # M11: check current_participants for OPERATOR type or if last message is from OPERATOR
@@ -365,6 +371,10 @@ def _extract_customer_message(messages: list[dict[str, Any]]) -> str:
 
     M11 format: each message has from.type = CUSTOMER | SHOP_USER | OPERATOR
     Legacy format: from_operator (bool), author_type (str)
+
+    The body text is checked in order of preference:
+      1. ``body``    — standard Mirakl M11 field
+      2. ``content`` — alternative field name used by some Connect responses
     """
     customer_msgs = [
         m for m in messages
@@ -377,8 +387,13 @@ def _extract_customer_message(messages: list[dict[str, Any]]) -> str:
             )
         )
     ]
+
+    def _get_body(msg: dict[str, Any]) -> str:
+        """Return the first non-empty body/content value from a message dict."""
+        return msg.get("body", "") or msg.get("content", "") or ""
+
     if customer_msgs:
-        return customer_msgs[-1].get("body", "")
+        return _get_body(customer_msgs[-1])
     if messages:
-        return messages[-1].get("body", "")
+        return _get_body(messages[-1])
     return ""

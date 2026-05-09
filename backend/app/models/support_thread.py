@@ -137,6 +137,16 @@ class SupportThread(Base):
         nullable=False,
         comment="Raw customer message text as received from Mirakl",
     )
+    message_summary: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        comment="1-2 sentence English summary of the customer message; populated by insight service",
+    )
+    translated_message: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        comment="Full English translation of the customer message; NULL or empty when already English",
+    )
     drafted_response: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,
