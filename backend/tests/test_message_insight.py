@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from app.services.message_insight import InsightResult, MessageInsightService
+from app.services.message_insight import InsightResult, MessageInsightService, TranslationResult
 
 
 @pytest.fixture
@@ -197,5 +197,159 @@ class TestInsightServiceErrorHandling:
         result = await service.generate_insight(
             customer_message="Test message",
             detected_language="en",
+        )
+        assert result is None
+
+
+class TestMockTranslateDraft:
+    """Verify the deterministic mock for translate_draft returns stable results."""
+
+    async def test_returns_translation_result(self, mock_insight_service):
+        result = await mock_insight_service.translate_draft(
+            english_text="Dear customer, your order is on its way.",
+            target_language="nl",
+        )
+        assert isinstance(result, TranslationResult)
+
+    async def test_translated_text_contains_source(self, mock_insight_service):
+        source = "Dear customer, your order is on its way."
+        result = await mock_insight_service.translate_draft(
+            english_text=source,
+            target_language="nl",
+        )
+        assert result is not None
+        assert source in result.translated_text
+
+    async def test_translated_text_contains_target_language(self, mock_insight_service):
+        result = await mock_insight_service.translate_draft(
+            english_text="Thank you for your message.",
+            target_language="fr",
+        )
+        assert result is not None
+        assert "fr" in result.translated_text
+
+    async def test_mock_returns_no_correction(self, mock_insight_service):
+        result = await mock_insight_service.translate_draft(
+            english_text="We apologise for the inconvenience.",
+            target_language="de",
+        )
+        assert result is not None
+        assert result.correction_made is False
+        assert result.correction_note == ""
+
+    async def test_different_target_languages_differ(self, mock_insight_service):
+        source = "Your order has shipped."
+        result_nl = await mock_insight_service.translate_draft(source, "nl")
+        result_fr = await mock_insight_service.translate_draft(source, "fr")
+        assert result_nl is not None
+        assert result_fr is not None
+        assert result_nl.translated_text != result_fr.translated_text
+
+
+class TestParseTranslationResponse:
+    """Test _parse_translation_response with various JSON shapes."""
+
+    def setup_method(self):
+        self.service = MessageInsightService(mock_mode=False)
+
+    def test_valid_response_parses(self):
+        raw = json.dumps({
+            "translated_text": "Bedankt voor uw bericht.",
+            "correction_made": False,
+            "correction_note": "",
+        })
+        result = self.service._parse_translation_response(raw)
+        assert result.translated_text == "Bedankt voor uw bericht."
+        assert result.correction_made is False
+        assert result.correction_note == ""
+
+    def test_correction_fields_preserved(self):
+        raw = json.dumps({
+            "translated_text": "Merci pour votre message.",
+            "correction_made": True,
+            "correction_note": "Original omitted the delivery promise.",
+        })
+        result = self.service._parse_translation_response(raw)
+        assert result.correction_made is True
+        assert "delivery" in result.correction_note
+
+    def test_whitespace_stripped_from_text_fields(self):
+        raw = json.dumps({
+            "translated_text": "  Vielen Dank.  ",
+            "correction_made": False,
+            "correction_note": "  ",
+        })
+        result = self.service._parse_translation_response(raw)
+        assert result.translated_text == "Vielen Dank."
+        assert result.correction_note == ""
+
+    def test_invalid_json_raises_value_error(self):
+        with pytest.raises(ValueError, match="not valid JSON"):
+            self.service._parse_translation_response("not json {")
+
+    def test_missing_translated_text_raises_value_error(self):
+        raw = json.dumps({"correction_made": False, "correction_note": ""})
+        with pytest.raises(ValueError, match="missing required fields"):
+            self.service._parse_translation_response(raw)
+
+    def test_missing_correction_made_raises_value_error(self):
+        raw = json.dumps({"translated_text": "Hallo.", "correction_note": ""})
+        with pytest.raises(ValueError, match="missing required fields"):
+            self.service._parse_translation_response(raw)
+
+    def test_missing_correction_note_raises_value_error(self):
+        raw = json.dumps({"translated_text": "Hallo.", "correction_made": False})
+        with pytest.raises(ValueError, match="missing required fields"):
+            self.service._parse_translation_response(raw)
+
+    def test_empty_object_raises_value_error(self):
+        with pytest.raises(ValueError, match="missing required fields"):
+            self.service._parse_translation_response("{}")
+
+
+class TestTranslateDraftErrorHandling:
+    """Verify that errors in the live translate_draft path are swallowed."""
+
+    async def test_network_error_returns_none(self, monkeypatch):
+        import httpx
+
+        service = MessageInsightService(mock_mode=False)
+
+        async def raise_network_error(*args, **kwargs):
+            raise httpx.ConnectError("Connection refused")
+
+        monkeypatch.setattr("httpx.AsyncClient.post", raise_network_error)
+
+        result = await service.translate_draft(
+            english_text="Your order is on its way.",
+            target_language="nl",
+        )
+        assert result is None
+
+    async def test_bad_json_from_llm_returns_none(self, monkeypatch):
+        service = MessageInsightService(mock_mode=False)
+
+        async def return_bad_json(user_content: str, *, system_prompt: str) -> str:
+            return "not valid json {"
+
+        monkeypatch.setattr(service, "_call_llm", return_bad_json)
+
+        result = await service.translate_draft(
+            english_text="Your order is on its way.",
+            target_language="nl",
+        )
+        assert result is None
+
+    async def test_missing_fields_from_llm_returns_none(self, monkeypatch):
+        service = MessageInsightService(mock_mode=False)
+
+        async def return_incomplete_json(user_content: str, *, system_prompt: str) -> str:
+            return json.dumps({"translated_text": "Uw bestelling is onderweg."})
+
+        monkeypatch.setattr(service, "_call_llm", return_incomplete_json)
+
+        result = await service.translate_draft(
+            english_text="Your order is on its way.",
+            target_language="nl",
         )
         assert result is None

@@ -70,3 +70,23 @@ class ThreadEscalateRequest(BaseModel):
         max_length=1000,
         description="Human-readable reason for escalation; stored in audit log",
     )
+
+
+class TranslateDraftRequest(BaseModel):
+    """Request body for the translate-draft endpoint."""
+
+    english_text: str = Field(
+        ...,
+        min_length=1,
+        max_length=10_000,
+        description="English draft to be translated into the target language",
+    )
+    target_language: CustomerLanguage
+
+
+class TranslateDraftResponse(BaseModel):
+    """Response from the translate-draft endpoint."""
+
+    translated_text: str | None = None
+    correction_made: bool = False
+    correction_note: str = ""

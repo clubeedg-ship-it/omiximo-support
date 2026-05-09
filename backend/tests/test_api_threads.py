@@ -405,6 +405,247 @@ class TestEscalateThread:
         assert resp.status_code == 422
 
 
+class TestTranslateDraftEndpoint:
+    """Tests for POST /{thread_id}/translate-draft.
+
+    The module-level ``_insight_service`` singleton in threads.py is not in
+    mock mode. All tests that exercise the success path patch ``translate_draft``
+    on the class so no real network calls are made.
+    """
+
+    @pytest.fixture(autouse=True)
+    def patch_translate_draft(self, monkeypatch):
+        """Replace MessageInsightService.translate_draft with a no-network stub.
+
+        The stub behaves like the real mock: it returns a deterministic
+        TranslationResult for any non-error test. Tests that want to exercise
+        the failure path override this fixture locally via their own monkeypatch.
+        """
+        from app.services import message_insight as mi_module
+        from app.services.message_insight import TranslationResult
+
+        async def stub_translate(self_svc, english_text: str, target_language: str):
+            return TranslationResult(
+                translated_text=f"[Stub {target_language}]: {english_text}",
+                correction_made=False,
+                correction_note="",
+            )
+
+        monkeypatch.setattr(mi_module.MessageInsightService, "translate_draft", stub_translate)
+
+    async def test_translate_draft_returns_translated_text(
+        self, client, sample_thread
+    ):
+        """Happy path: Dutch target returns a non-empty translated_text."""
+        resp = await client.post(
+            f"/api/v1/threads/{sample_thread.id}/translate-draft",
+            json={
+                "english_text": "Dear customer, your order is on its way.",
+                "target_language": "nl",
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["translated_text"] is not None
+        assert len(data["translated_text"]) > 0
+
+    async def test_translate_draft_english_target_returns_400(
+        self, client, sample_thread
+    ):
+        """Requesting English as target language must be rejected before LLM call."""
+        resp = await client.post(
+            f"/api/v1/threads/{sample_thread.id}/translate-draft",
+            json={
+                "english_text": "Dear customer, your order is on its way.",
+                "target_language": "en",
+            },
+        )
+        assert resp.status_code == 400
+
+    async def test_translate_draft_nonexistent_thread_returns_404(self, client):
+        resp = await client.post(
+            f"/api/v1/threads/{uuid.uuid4()}/translate-draft",
+            json={
+                "english_text": "Dear customer, your order is on its way.",
+                "target_language": "nl",
+            },
+        )
+        assert resp.status_code == 404
+
+    async def test_translate_draft_requires_auth(
+        self, unauthenticated_client, sample_thread
+    ):
+        resp = await unauthenticated_client.post(
+            f"/api/v1/threads/{sample_thread.id}/translate-draft",
+            json={
+                "english_text": "Dear customer, your order is on its way.",
+                "target_language": "nl",
+            },
+        )
+        assert resp.status_code == 401
+
+    async def test_translate_draft_forbidden_user_gets_403(
+        self, forbidden_client, sample_thread
+    ):
+        resp = await forbidden_client.post(
+            f"/api/v1/threads/{sample_thread.id}/translate-draft",
+            json={
+                "english_text": "Dear customer, your order is on its way.",
+                "target_language": "nl",
+            },
+        )
+        assert resp.status_code == 403
+
+    async def test_translate_draft_empty_text_returns_422(
+        self, client, sample_thread
+    ):
+        """Empty english_text must fail Pydantic validation before reaching the handler."""
+        resp = await client.post(
+            f"/api/v1/threads/{sample_thread.id}/translate-draft",
+            json={
+                "english_text": "",
+                "target_language": "nl",
+            },
+        )
+        assert resp.status_code == 422
+
+    async def test_translate_draft_invalid_language_returns_422(
+        self, client, sample_thread
+    ):
+        """An unsupported language code must fail validation."""
+        resp = await client.post(
+            f"/api/v1/threads/{sample_thread.id}/translate-draft",
+            json={
+                "english_text": "Dear customer, your order is on its way.",
+                "target_language": "xx",
+            },
+        )
+        assert resp.status_code == 422
+
+    async def test_translate_draft_response_has_expected_shape(
+        self, client, sample_thread
+    ):
+        """Response body must contain all three defined fields."""
+        resp = await client.post(
+            f"/api/v1/threads/{sample_thread.id}/translate-draft",
+            json={
+                "english_text": "Dear customer, your order is on its way.",
+                "target_language": "fr",
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "translated_text" in data
+        assert "correction_made" in data
+        assert "correction_note" in data
+
+    async def test_translate_draft_writes_audit_log(
+        self, client, db, sample_thread
+    ):
+        """A successful call must persist an audit log entry with correct fields."""
+        resp = await client.post(
+            f"/api/v1/threads/{sample_thread.id}/translate-draft",
+            json={
+                "english_text": "Dear customer, your order is on its way.",
+                "target_language": "de",
+            },
+        )
+        assert resp.status_code == 200
+
+        from sqlalchemy import select as sa_select
+        from app.models.audit_log import AuditLog
+
+        result = await db.execute(
+            sa_select(AuditLog).where(
+                AuditLog.thread_id == sample_thread.id,
+                AuditLog.action == "draft_translation_requested",
+            )
+        )
+        log = result.scalar_one_or_none()
+        assert log is not None
+        assert log.actor == "admin@omiximo.nl"
+        assert log.detail_json["target_language"] == "de"
+        assert log.detail_json["translation_succeeded"] is True
+
+    async def test_translate_draft_llm_failure_returns_null_text(
+        self, client, sample_thread, monkeypatch
+    ):
+        """When the service returns None, translated_text is null — no 500 raised."""
+        from app.services import message_insight as mi_module
+
+        # Override the autouse stub with a failing variant
+        async def failing_translate(self_svc, english_text, target_language):
+            return None
+
+        monkeypatch.setattr(
+            mi_module.MessageInsightService,
+            "translate_draft",
+            failing_translate,
+        )
+
+        resp = await client.post(
+            f"/api/v1/threads/{sample_thread.id}/translate-draft",
+            json={
+                "english_text": "Dear customer, your order is on its way.",
+                "target_language": "nl",
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["translated_text"] is None
+
+    async def test_translate_draft_llm_failure_still_writes_audit_log(
+        self, client, db, sample_thread, monkeypatch
+    ):
+        """Even when the LLM fails, the audit log must be written."""
+        from app.services import message_insight as mi_module
+        from app.models.audit_log import AuditLog
+        from sqlalchemy import select as sa_select
+
+        async def failing_translate(self_svc, english_text, target_language):
+            return None
+
+        monkeypatch.setattr(
+            mi_module.MessageInsightService,
+            "translate_draft",
+            failing_translate,
+        )
+
+        await client.post(
+            f"/api/v1/threads/{sample_thread.id}/translate-draft",
+            json={
+                "english_text": "Dear customer, your order is on its way.",
+                "target_language": "nl",
+            },
+        )
+
+        result = await db.execute(
+            sa_select(AuditLog).where(
+                AuditLog.thread_id == sample_thread.id,
+                AuditLog.action == "draft_translation_requested",
+            )
+        )
+        log = result.scalar_one_or_none()
+        assert log is not None
+        assert log.detail_json["translation_succeeded"] is False
+
+    async def test_translate_draft_stub_correction_fields_false_by_default(
+        self, client, sample_thread
+    ):
+        """The autouse stub returns correction_made=False and an empty note."""
+        resp = await client.post(
+            f"/api/v1/threads/{sample_thread.id}/translate-draft",
+            json={
+                "english_text": "We have received your complaint.",
+                "target_language": "nl",
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["correction_made"] is False
+        assert data["correction_note"] == ""
+
+
 class TestHealthEndpoint:
 
     async def test_health_check_returns_ok(self, unauthenticated_client):

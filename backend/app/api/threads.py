@@ -26,6 +26,8 @@ from app.schemas.thread import (
     ThreadEscalateRequest,
     ThreadListResponse,
     ThreadResponse,
+    TranslateDraftRequest,
+    TranslateDraftResponse,
 )
 from app.services.audit import write_audit_log
 from app.services.message_insight import MessageInsightService
@@ -313,6 +315,59 @@ async def get_draft_insight(
     return InsightResponse(
         summary=result.summary,
         translated_message=result.translated_message,
+    )
+
+
+@router.post("/{thread_id}/translate-draft", response_model=TranslateDraftResponse)
+async def translate_draft(
+    thread_id: uuid.UUID,
+    body: TranslateDraftRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[CurrentUser, Depends(require_admin_user)],
+) -> TranslateDraftResponse:
+    """Translate an English draft into the customer's target language.
+
+    Performs a two-step translate-then-verify pass so that the LLM checks
+    its own output and corrects any accuracy issues before returning the
+    result. The caller supplies the English source text and the desired
+    target language.
+
+    Returns null ``translated_text`` when the LLM is unavailable. Requesting
+    a translation into English is rejected with 400 because back-translation
+    verification is not applicable.
+    """
+    thread = await _get_thread_or_404(db, thread_id)
+
+    if body.target_language.value == "en":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Back-translation verification is not applicable for English targets.",
+        )
+
+    result = await _insight_service.translate_draft(
+        english_text=body.english_text,
+        target_language=body.target_language.value,
+    )
+
+    await write_audit_log(
+        db,
+        action="draft_translation_requested",
+        actor=current_user.audit_actor,
+        thread_id=thread.id,
+        detail={
+            "target_language": body.target_language.value,
+            "source_length": len(body.english_text),
+            "translation_succeeded": result is not None,
+        },
+    )
+
+    if result is None:
+        return TranslateDraftResponse()
+
+    return TranslateDraftResponse(
+        translated_text=result.translated_text,
+        correction_made=result.correction_made,
+        correction_note=result.correction_note,
     )
 
 

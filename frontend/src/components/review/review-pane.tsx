@@ -70,6 +70,7 @@ export function ReviewPane({ thread }: ReviewPaneProps) {
             onChange={setDraftedResponse}
             isEditable={isEditable}
             threadStatus={thread.status}
+            targetLanguage={thread.customer_language ?? 'en'}
           />
           <ActionBar
             thread={thread}

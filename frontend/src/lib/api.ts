@@ -207,3 +207,24 @@ export async function deleteTemplateOverride(id: string): Promise<void> {
     method: 'DELETE',
   })
 }
+
+export interface TranslateDraftRequest {
+  english_text: string
+  target_language: string
+}
+
+export interface TranslateDraftResponse {
+  translated_text: string | null
+  correction_made: boolean
+  correction_note: string
+}
+
+export async function translateDraft(
+  threadId: string,
+  data: TranslateDraftRequest,
+): Promise<TranslateDraftResponse> {
+  return request<TranslateDraftResponse>(`/api/v1/threads/${threadId}/translate-draft`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}

@@ -60,6 +60,37 @@ If the draft is already written in English, return an empty string "".
 Respond with ONLY the JSON object. No prose, no markdown fences.
 """
 
+_TRANSLATE_SYSTEM_PROMPT = """\
+You are a professional multilingual translation engine for customer support communications.
+
+You will receive:
+- A source text in English (the intended reply to a customer)
+- A target language code (ISO 639-1: "nl", "fr", "de", etc.)
+
+Your task has two steps:
+
+STEP 1 — TRANSLATE
+Translate the source text into the target language. The translation must:
+- Preserve all commitments, promises, and factual statements exactly
+- Maintain a professional, courteous customer service tone
+- Not add or remove any content
+
+STEP 2 — VERIFY
+Re-read your translation and compare it to the source. Determine whether the
+translation fully and accurately represents the source intent. If any commitment,
+action, or factual statement is missing, distorted, or altered in tone from
+neutral/professional to negative or dismissive, produce a corrected translation.
+
+Respond with ONLY a JSON object with exactly these keys:
+{
+  "translated_text": "<the final translation in the target language>",
+  "correction_made": true or false,
+  "correction_note": "<one sentence in English describing what was corrected, or empty string if no correction>"
+}
+
+No prose, no markdown fences, no explanation outside the JSON.
+"""
+
 
 @dataclass
 class InsightResult:
@@ -67,6 +98,15 @@ class InsightResult:
 
     summary: str
     translated_message: str
+
+
+@dataclass
+class TranslationResult:
+    """Structured output from the back-translation verification step."""
+
+    translated_text: str
+    correction_made: bool
+    correction_note: str
 
 
 class MessageInsightService:
@@ -138,6 +178,46 @@ class MessageInsightService:
         except Exception as exc:
             logger.warning(
                 "Draft insight generation failed (non-blocking): %s", exc,
+            )
+            return None
+
+    async def translate_draft(
+        self,
+        english_text: str,
+        target_language: str,
+    ) -> TranslationResult | None:
+        """Translate an English draft into the target customer language.
+
+        Performs a two-step translate-then-verify pass: the LLM translates
+        the source text and immediately re-checks its own output for accuracy,
+        returning a corrected translation when it detects a discrepancy.
+
+        This method never raises — errors are logged and ``None`` is returned
+        so that callers can treat the translation step as best-effort.
+
+        Args:
+            english_text: The English draft to be translated.
+            target_language: ISO 639-1 code of the target language
+                             (e.g. "nl", "fr", "de").
+
+        Returns:
+            A :class:`TranslationResult` on success, or ``None`` on any failure.
+        """
+        if self._mock_mode:
+            return self._mock_translate_draft(english_text, target_language)
+
+        try:
+            user_content = (
+                f"Target language: {target_language}\n\n"
+                f"Source text (English):\n{english_text}"
+            )
+            raw_response = await self._call_llm(
+                user_content, system_prompt=_TRANSLATE_SYSTEM_PROMPT,
+            )
+            return self._parse_translation_response(raw_response)
+        except Exception as exc:
+            logger.warning(
+                "Draft translation failed (non-blocking): %s", exc,
             )
             return None
 
@@ -269,4 +349,46 @@ class MessageInsightService:
         return InsightResult(
             summary="The drafted response acknowledges the customer's inquiry and provides next steps.",
             translated_message=f"[Mock English translation of {detected_language} draft]: {drafted_response}",
+        )
+
+    def _parse_translation_response(self, raw: str) -> TranslationResult:
+        """Parse the raw LLM JSON response into a TranslationResult.
+
+        Raises:
+            ValueError: If JSON is invalid or required fields are missing.
+        """
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"Translation LLM response is not valid JSON: {raw[:200]}"
+            ) from exc
+
+        missing = [
+            k for k in ("translated_text", "correction_made", "correction_note")
+            if k not in data
+        ]
+        if missing:
+            raise ValueError(
+                f"Translation LLM response missing required fields: {missing}. "
+                f"Raw: {raw[:200]}"
+            )
+
+        return TranslationResult(
+            translated_text=str(data["translated_text"]).strip(),
+            correction_made=bool(data["correction_made"]),
+            correction_note=str(data["correction_note"]).strip(),
+        )
+
+    @staticmethod
+    def _mock_translate_draft(english_text: str, target_language: str) -> TranslationResult:
+        """Deterministic mock translation for tests and local dev.
+
+        Returns a predictable result without any LLM calls so that test
+        assertions are stable without a live API key.
+        """
+        return TranslationResult(
+            translated_text=f"[Mock {target_language} translation]: {english_text}",
+            correction_made=False,
+            correction_note="",
         )
