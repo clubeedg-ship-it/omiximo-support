@@ -98,7 +98,7 @@ ENVIRONMENT=development|production
 FERNET_KEY=<generate: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())">
 CLERK_ISSUER=https://<your-app>.clerk.accounts.dev
 CLERK_JWKS_URL=https://<your-app>.clerk.accounts.dev/.well-known/jwks.json
-ALLOWED_ADMIN_EMAILS=admin@omiximo.nl
+ALLOWED_ADMIN_EMAILS=info@omiximo.nl
 LLM_API_KEY=<openrouter-key>
 MIRAKL_CONNECT_CLIENT_ID=<mirakl-connect-id>
 MIRAKL_CONNECT_CLIENT_SECRET=<mirakl-connect-secret>
@@ -113,7 +113,7 @@ VITE_CLERK_PUBLISHABLE_KEY=pk_test_...
 ### Dev bypass (local only)
 ```
 ALLOW_INSECURE_DEV_AUTH_BYPASS=true
-DEV_AUTH_BYPASS_EMAIL=admin@omiximo.nl
+DEV_AUTH_BYPASS_EMAIL=info@omiximo.nl
 VITE_ALLOW_INSECURE_DEV_AUTH_BYPASS=true
 ```
 
