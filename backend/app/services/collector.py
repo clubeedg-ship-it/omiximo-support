@@ -30,14 +30,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models.marketplace_account import MarketplaceAccount
 from app.models.support_thread import SupportThread, ThreadStatus
+from app.models.thread_message import MessageAuthorType, MessageDirection, ThreadMessage
 from app.services.audit import write_audit_log
+from app.services.message_filter import MessageFilter
 from app.services.mirakl_client import MiraklClient, MiraklConnectClient
+from app.services.thread_reopen import append_customer_message
 
 logger = logging.getLogger(__name__)
 
 
 class ThreadCollector:
     """Collects new Mirakl threads and upserts them into the database."""
+
+    def __init__(self, message_filter: MessageFilter | None = None) -> None:
+        self._message_filter = message_filter or MessageFilter()
 
     async def collect_all(self, db: AsyncSession, *, updated_since: str | None = None) -> int:
         """Run collection for all active marketplace accounts.
@@ -297,6 +303,20 @@ class ThreadCollector:
         )
         existing = (await db.execute(stmt)).scalar_one_or_none()
         if existing is not None:
+            # Thread already exists — check for new messages (follow-ups)
+            messages: list[dict[str, Any]] = raw.get("messages", [])
+            latest_customer_msg = _extract_customer_message(messages)
+            if (
+                latest_customer_msg
+                and latest_customer_msg != existing.customer_message
+            ):
+                await append_customer_message(db, existing, latest_customer_msg)
+                await db.commit()
+                logger.info(
+                    "Appended follow-up message to thread %s (mirakl_thread_id=%s)",
+                    existing.id,
+                    mirakl_thread_id,
+                )
             return False
 
         # Extract the latest customer message body
@@ -308,12 +328,40 @@ class ThreadCollector:
                 or raw.get("topic", {}).get("subject", "")
                 or ""
             )
-            if not customer_message:
-                logger.warning(
-                    "Empty customer_message for raw thread id=%s — no body, content, "
-                    "or subject could be extracted. Thread will be stored with empty message.",
-                    mirakl_thread_id,
-                )
+
+        # ---------------------------------------------------------------- #
+        # Message filter: reject non-customer messages before storage       #
+        # ---------------------------------------------------------------- #
+        should_process, rejection_reason = self._message_filter.should_process(
+            raw, customer_message
+        )
+        if not should_process:
+            logger.info(
+                "Filtered thread %s: %s", mirakl_thread_id, rejection_reason
+            )
+            await write_audit_log(
+                db,
+                action="message_filtered",
+                actor="system",
+                thread_id=None,
+                detail={
+                    "mirakl_thread_id": mirakl_thread_id,
+                    "mirakl_order_id": mirakl_order_id,
+                    "account_id": str(account.id),
+                    "marketplace": account.marketplace,
+                    "reason": rejection_reason,
+                    "mode": mode,
+                },
+            )
+            await db.commit()
+            return False
+
+        if not customer_message:
+            logger.warning(
+                "Empty customer_message for raw thread id=%s — no body, content, "
+                "or subject could be extracted. Thread will be stored with empty message.",
+                mirakl_thread_id,
+            )
 
         # Determine if this is an operator/marketplace message
         # M11: check current_participants for OPERATOR type or if last message is from OPERATOR
@@ -322,8 +370,12 @@ class ThreadCollector:
         has_customer = any(p.get("type") == "CUSTOMER" for p in current_participants)
         operator_required: bool = has_operator and not has_customer or raw.get("operator_message", False)
 
-        # Compute SLA deadline
-        response_deadline = datetime.now(UTC) + timedelta(hours=account.sla_hours)
+        # Use Mirakl's original thread creation date, not our import time
+        mirakl_date = _parse_mirakl_date(raw)
+        thread_created_at = mirakl_date or datetime.now(UTC)
+
+        # SLA deadline is relative to the original thread date
+        response_deadline = thread_created_at + timedelta(hours=account.sla_hours)
 
         thread = SupportThread(
             id=uuid.uuid4(),
@@ -334,8 +386,23 @@ class ThreadCollector:
             operator_required=operator_required,
             status=ThreadStatus.PENDING_REVIEW,
             response_deadline=response_deadline,
+            message_count=1,
+            last_customer_message_at=thread_created_at,
+            created_at=thread_created_at,
         )
         db.add(thread)
+        await db.flush()
+
+        # Create the initial ThreadMessage for the customer's first message
+        initial_msg = ThreadMessage(
+            id=uuid.uuid4(),
+            thread_id=thread.id,
+            direction=MessageDirection.INBOUND.value,
+            author_type=MessageAuthorType.CUSTOMER.value,
+            body=customer_message,
+            sequence_number=1,
+        )
+        db.add(initial_msg)
         await db.flush()
 
         await write_audit_log(
@@ -397,3 +464,29 @@ def _extract_customer_message(messages: list[dict[str, Any]]) -> str:
     if messages:
         return _get_body(messages[-1])
     return ""
+
+
+def _parse_mirakl_date(raw: dict[str, Any]) -> datetime | None:
+    """Extract the original thread creation date from a Mirakl thread payload.
+
+    Mirakl uses ``date_created`` (M11) or ``created_date`` (Connect).
+    Falls back to the earliest message date if the thread-level date is absent.
+    """
+    for key in ("date_created", "created_date", "date"):
+        val = raw.get(key)
+        if val:
+            try:
+                return datetime.fromisoformat(val.replace("Z", "+00:00"))
+            except (ValueError, AttributeError):
+                continue
+
+    messages = raw.get("messages", [])
+    if messages:
+        earliest = messages[0].get("date_created") or messages[0].get("date")
+        if earliest:
+            try:
+                return datetime.fromisoformat(earliest.replace("Z", "+00:00"))
+            except (ValueError, AttributeError):
+                pass
+
+    return None

@@ -192,3 +192,58 @@ class TestJinja2Rendering:
         assert "CUSTOM-ORDER" in rendered
         assert "CUSTOM-TRACKING" in rendered
         assert "Custom Shop" in rendered
+
+    async def test_marketplace_name_available_in_safe_context(
+        self, db, engine_instance, sample_account
+    ):
+        """Templates can use {{ marketplace_name }} without it being in context.
+
+        The safe_context default ensures an empty string is rendered rather than
+        Jinja2 raising UndefinedError with StrictUndefined.
+        """
+        template = ResponseTemplate(
+            id=uuid.uuid4(),
+            marketplace_account_id=None,
+            category="marketplace_name_test",
+            language="en",
+            template_body="Welcome to {{ marketplace_name }}! Order: {{ order_id }}.",
+            is_active=True,
+        )
+        db.add(template)
+        await db.flush()
+
+        # Render WITHOUT passing marketplace_name in context
+        rendered = await engine_instance.render(
+            db,
+            category="marketplace_name_test",
+            language=CustomerLanguage.en,
+            marketplace_account_id=sample_account.id,
+            context={"order_id": "ORD-MPN-001"},
+        )
+        # Should not crash; marketplace_name defaults to empty string
+        assert "Welcome to !" in rendered
+        assert "ORD-MPN-001" in rendered
+
+    async def test_marketplace_name_renders_when_provided(
+        self, db, engine_instance, sample_account
+    ):
+        """When marketplace_name is passed in context, it renders correctly."""
+        template = ResponseTemplate(
+            id=uuid.uuid4(),
+            marketplace_account_id=None,
+            category="marketplace_name_provided_test",
+            language="en",
+            template_body="Welcome to {{ marketplace_name }}!",
+            is_active=True,
+        )
+        db.add(template)
+        await db.flush()
+
+        rendered = await engine_instance.render(
+            db,
+            category="marketplace_name_provided_test",
+            language=CustomerLanguage.en,
+            marketplace_account_id=sample_account.id,
+            context={"marketplace_name": "MediaMarkt"},
+        )
+        assert "Welcome to MediaMarkt!" in rendered

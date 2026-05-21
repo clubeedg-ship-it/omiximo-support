@@ -31,6 +31,7 @@ from app.services.audit import write_audit_log
 from app.services.classifier import ClassificationResult, MessageClassifier
 from app.services.mirakl_client import MiraklClient
 from app.services.safety_rules import SafetyRules
+from app.services.smart_draft import SmartDraftService
 from app.services.template_engine import TemplateEngine
 
 logger = logging.getLogger(__name__)
@@ -50,10 +51,12 @@ class DraftPipeline:
         classifier: MessageClassifier | None = None,
         template_engine: TemplateEngine | None = None,
         safety_rules: SafetyRules | None = None,
+        smart_draft_service: SmartDraftService | None = None,
     ) -> None:
         self._classifier = classifier or MessageClassifier()
         self._template_engine = template_engine or TemplateEngine()
         self._safety_rules = safety_rules or SafetyRules()
+        self._smart_draft_service = smart_draft_service or SmartDraftService()
 
     async def process_new_threads(self, db: AsyncSession) -> int:
         """Process all PENDING_REVIEW threads that have not yet been classified.
@@ -166,17 +169,19 @@ class DraftPipeline:
         )
 
         # ---------------------------------------------------------------- #
-        # Step 4: Route by risk level                                       #
+        # Step 4: RED threads stay in PENDING_REVIEW with no draft —       #
+        # the UI shows the RED risk badge so the reviewer knows it's      #
+        # high-stakes and must be handled manually.                        #
         # ---------------------------------------------------------------- #
         if classification.risk_level == RiskLevel.RED:
-            thread.status = ThreadStatus.ESCALATED
+            thread.status = ThreadStatus.PENDING_REVIEW
             thread.updated_at = datetime.now(UTC)
             await write_audit_log(
                 db,
-                action="escalated_auto_red",
+                action="red_pending_review",
                 actor="system",
                 thread_id=thread.id,
-                detail={"reason": "risk_level=RED — manual handling required"},
+                detail={"reason": "risk_level=RED — no draft, human writes reply"},
             )
             await db.commit()
             return
@@ -186,6 +191,9 @@ class DraftPipeline:
         # ---------------------------------------------------------------- #
         template_context = _build_template_context(thread, order_context, account)
 
+        # Attempt template render (used directly for GREEN, as reference for ORANGE)
+        template_rendered_ok = False
+        drafted_response: str | None = None
         try:
             drafted_response = await self._template_engine.render(
                 db,
@@ -194,9 +202,8 @@ class DraftPipeline:
                 marketplace_account_id=thread.marketplace_account_id,
                 context=template_context,
             )
+            template_rendered_ok = True
         except Exception as exc:
-            # No matching template — for ORANGE this is acceptable (human handles it);
-            # for GREEN we cannot auto-send, so we escalate to PENDING_REVIEW.
             logger.warning(
                 "Template render failed for thread %s (%s/%s): %s",
                 thread.id,
@@ -204,6 +211,67 @@ class DraftPipeline:
                 classification.language.value,
                 exc,
             )
+
+        # ---------------------------------------------------------------- #
+        # Step 5b: ORANGE path — smart draft with LLM augmentation         #
+        # ---------------------------------------------------------------- #
+        if classification.risk_level == RiskLevel.ORANGE:
+            smart_result = await self._smart_draft_service.generate_draft(
+                db,
+                thread=thread,
+                order_context=order_context,
+                category=classification.category,
+                language=classification.language,
+                account=account,
+                template_reference=drafted_response if template_rendered_ok else None,
+            )
+
+            if smart_result.drafted_response:
+                thread.drafted_response = smart_result.drafted_response
+            elif template_rendered_ok:
+                # Smart draft failed but template succeeded — use template
+                thread.drafted_response = drafted_response
+            # else: no draft available — reviewer handles from scratch
+
+            thread.updated_at = datetime.now(UTC)
+
+            await write_audit_log(
+                db,
+                action="smart_draft_generated",
+                actor="system",
+                thread_id=thread.id,
+                detail={
+                    "source": smart_result.source,
+                    "knowledge_entry_ids": smart_result.knowledge_entry_ids,
+                    "similar_thread_count": smart_result.similar_thread_count,
+                    "has_draft": thread.drafted_response is not None,
+                },
+            )
+
+            # Safety validation still runs on whatever draft we have
+            if thread.drafted_response:
+                is_safe, violations = self._safety_rules.validate(
+                    thread, thread.drafted_response,
+                )
+                await write_audit_log(
+                    db,
+                    action="safety_validated" if is_safe else "safety_blocked",
+                    actor="system",
+                    thread_id=thread.id,
+                    detail={"is_safe": is_safe, "violations": violations},
+                )
+                # For ORANGE: keep the draft even if unsafe (reviewer will see violations)
+
+            thread.status = ThreadStatus.PENDING_REVIEW
+            thread.updated_at = datetime.now(UTC)
+            await db.commit()
+            return
+
+        # ---------------------------------------------------------------- #
+        # Step 5c: GREEN path — template-based draft (unchanged)           #
+        # ---------------------------------------------------------------- #
+        if not template_rendered_ok:
+            # No matching template for GREEN — cannot auto-send
             thread.status = ThreadStatus.PENDING_REVIEW
             thread.updated_at = datetime.now(UTC)
             await write_audit_log(
@@ -214,7 +282,6 @@ class DraftPipeline:
                 detail={
                     "category": classification.category,
                     "language": classification.language.value,
-                    "error": str(exc),
                 },
             )
             await db.commit()
@@ -229,14 +296,14 @@ class DraftPipeline:
             actor="system",
             thread_id=thread.id,
             detail={
-                "template_length": len(drafted_response),
+                "template_length": len(drafted_response) if drafted_response else 0,
                 "category": classification.category,
                 "language": classification.language.value,
             },
         )
 
         # ---------------------------------------------------------------- #
-        # Step 6: Safety validation                                         #
+        # Step 6: Safety validation (GREEN path only)                       #
         # ---------------------------------------------------------------- #
         is_safe, violations = self._safety_rules.validate(thread, drafted_response)
 
@@ -255,12 +322,14 @@ class DraftPipeline:
             return
 
         # ---------------------------------------------------------------- #
-        # Step 7: Auto-send (GREEN only) or hand to human (ORANGE)        #
+        # Step 7: Auto-send (GREEN only, gated by AUTO_SEND_ENABLED)       #
         # ---------------------------------------------------------------- #
-        if classification.risk_level == RiskLevel.GREEN:
+        from app.config import settings
+
+        if settings.AUTO_SEND_ENABLED:
             await self._auto_send(db, thread, account, drafted_response)
         else:
-            # ORANGE: draft ready, awaiting human approval
+            # Auto-send disabled — leave draft for human approval
             thread.status = ThreadStatus.PENDING_REVIEW
             thread.updated_at = datetime.now(UTC)
             await db.commit()

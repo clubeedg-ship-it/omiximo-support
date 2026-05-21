@@ -5,9 +5,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { RiskBadge } from '@/components/threads/risk-badge'
 import { StatusBadge } from '@/components/threads/status-badge'
-import type { Thread } from '@/lib/types'
+import type { Thread, ThreadMessage, MessageAuthorType } from '@/lib/types'
 import { fetchThreadInsight, type InsightResponse } from '@/lib/api'
-import { formatDate, getLanguageLabel } from '@/lib/utils'
+import { formatDate, formatRelativeTime, getLanguageLabel } from '@/lib/utils'
 
 function sanitizeHtml(raw: string): string {
   return DOMPurify.sanitize(raw, {
@@ -125,13 +125,68 @@ function AiInsightCard({ threadId }: { threadId: string }) {
   )
 }
 
+const AUTHOR_TYPE_LABELS: Record<MessageAuthorType, string> = {
+  CUSTOMER: 'Customer',
+  SHOP_USER: 'Omiximo',
+  OPERATOR: 'Operator',
+  SYSTEM: 'System',
+}
+
+function MessageBubble({ message }: { message: ThreadMessage }) {
+  const isOutbound = message.direction === 'OUTBOUND'
+  const authorLabel = AUTHOR_TYPE_LABELS[message.author_type]
+
+  return (
+    <div className={`flex flex-col gap-1 ${isOutbound ? 'items-end' : 'items-start'}`}>
+      <div className={`flex items-center gap-2 ${isOutbound ? 'flex-row-reverse' : 'flex-row'}`}>
+        <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
+          {authorLabel}
+        </span>
+        <span className="text-xs text-slate-400 dark:text-slate-500" aria-label={`Sent at ${formatDate(message.created_at)}`}>
+          {formatRelativeTime(message.created_at)}
+        </span>
+      </div>
+      {isOutbound ? (
+        <div
+          className="max-w-[85%] rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm leading-relaxed text-emerald-900 dark:border-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-100 whitespace-pre-wrap"
+          role="article"
+          aria-label={`${authorLabel} message`}
+        >
+          {message.body}
+        </div>
+      ) : (
+        <blockquote
+          className="max-w-[85%] rounded-md border-l-4 border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-relaxed text-slate-800 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-200 whitespace-pre-wrap"
+          aria-label={`${authorLabel} message`}
+        >
+          {message.body}
+        </blockquote>
+      )}
+    </div>
+  )
+}
+
+function ConversationTimeline({ messages }: { messages: ThreadMessage[] }) {
+  const sorted = [...messages].sort((a, b) => a.sequence_number - b.sequence_number)
+
+  return (
+    <div className="space-y-4" role="log" aria-label="Conversation timeline" aria-live="off">
+      {sorted.map((message) => (
+        <MessageBubble key={message.id} message={message} />
+      ))}
+    </div>
+  )
+}
+
 export function MessagePanel({ thread }: MessagePanelProps) {
+  const hasMessages = Array.isArray(thread.messages) && thread.messages.length > 0
+
   return (
     <Card>
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2 text-base">
           <MessageSquare className="h-4 w-4 text-slate-500" aria-hidden="true" />
-          Customer Message
+          {hasMessages ? 'Conversation' : 'Customer Message'}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -170,16 +225,20 @@ export function MessagePanel({ thread }: MessagePanelProps) {
 
         <Separator />
 
-        <div>
-          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">
-            Received {formatDate(thread.created_at)}
-          </p>
-          <blockquote
-            className="rounded-md border-l-4 border-slate-200 bg-slate-50 p-4 text-sm leading-relaxed text-slate-800 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-200"
-            aria-label="Customer message content"
-            dangerouslySetInnerHTML={{ __html: sanitizeHtml(thread.customer_message) }}
-          />
-        </div>
+        {hasMessages ? (
+          <ConversationTimeline messages={thread.messages!} />
+        ) : (
+          <div>
+            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">
+              Received {formatDate(thread.created_at)}
+            </p>
+            <blockquote
+              className="rounded-md border-l-4 border-slate-200 bg-slate-50 p-4 text-sm leading-relaxed text-slate-800 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-200"
+              aria-label="Customer message content"
+              dangerouslySetInnerHTML={{ __html: sanitizeHtml(thread.customer_message) }}
+            />
+          </div>
+        )}
 
         <AiInsightCard threadId={String(thread.id)} />
       </CardContent>

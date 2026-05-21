@@ -22,6 +22,7 @@ The module exposes:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from typing import Any
@@ -222,7 +223,11 @@ class MiraklConnectClient:
         return orders[0] if orders else {}
 
     async def send_reply(self, thread_id: str, body: str) -> dict[str, Any]:
-        """Post a reply to a Mirakl Connect thread.
+        """Post a reply to a Mirakl Connect conversation.
+
+        Uses multipart/form-data with a ``message_input`` JSON part as required
+        by the Mirakl conversations API. The Connect API infers the recipient
+        from conversation context, so no ``to`` field is needed.
 
         This is the only write operation in the client. It must only be called
         after ``safety_rules`` validation has passed and ``audit_log`` is in
@@ -238,11 +243,44 @@ class MiraklConnectClient:
         Raises:
             MiraklAPIError: On any non-2xx HTTP response or network error.
         """
-        return await self._request(
-            "POST",
-            f"/channels/v1/threads/{thread_id}/message",
-            json={"body": body},
-        )
+        token = await self._get_access_token()
+        url = f"{self._base_url}/conversations/{thread_id}/messages"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+        }
+        message_input = json.dumps({"body": body})
+        files = {"message_input": (None, message_input, "application/json")}
+
+        try:
+            response = await self._http.request(
+                "POST",
+                url,
+                files=files,
+                headers=headers,
+            )
+        except httpx.TimeoutException as exc:
+            raise MiraklAPIError(
+                f"Mirakl Connect API request timed out: POST /conversations/{thread_id}/messages",
+                detail=str(exc),
+            ) from exc
+        except httpx.RequestError as exc:
+            raise MiraklAPIError(
+                f"Mirakl Connect API network error: POST /conversations/{thread_id}/messages",
+                detail=str(exc),
+            ) from exc
+
+        if response.is_error:
+            raise MiraklAPIError(
+                f"Mirakl Connect API returned {response.status_code}: POST /conversations/{thread_id}/messages",
+                status_code=response.status_code,
+                detail=response.text[:500],
+            )
+
+        if not response.content:
+            return {}
+
+        return response.json()  # type: ignore[no-any-return]
 
     # ---------------------------------------------------------------------- #
     # Internal helpers                                                         #
@@ -394,12 +432,64 @@ class _LegacyMiraklClient:
         return response.json()
 
     async def send_reply(self, thread_id: str, body: str) -> dict[str, Any]:
+        """Post a reply to a Mirakl thread using multipart/form-data.
+
+        The Mirakl M12 inbox API requires a ``message_input`` multipart part
+        containing JSON with ``body`` and ``to`` fields. This method bypasses
+        ``_raw_request`` because that helper does not support the ``files=``
+        parameter needed for multipart encoding.
+
+        Args:
+            thread_id: The Mirakl thread identifier.
+            body:      The message text to send.
+
+        Returns:
+            Parsed JSON response body as a dict.
+
+        Raises:
+            MiraklAPIError: On any non-2xx HTTP response or network error.
+        """
         self._assert_open()
-        response = await self._raw_request(
-            "POST",
-            f"/api/inbox/threads/{thread_id}/message",
-            json={"body": body},
+        assert self._client is not None
+
+        path = f"/api/inbox/threads/{thread_id}/message"
+        message_input = json.dumps(
+            {"body": body, "to": [{"type": "CUSTOMER"}]}
         )
+        files = {"message_input": (None, message_input, "application/json")}
+        headers = {
+            "Authorization": self._api_key,
+            "Accept": "application/json",
+        }
+
+        try:
+            response = await self._client.request(
+                "POST",
+                path,
+                files=files,
+                headers=headers,
+            )
+        except httpx.TimeoutException as exc:
+            raise MiraklAPIError(
+                f"Mirakl API request timed out: POST {path}",
+                account_id=str(self._account.id),
+                detail=str(exc),
+            ) from exc
+        except httpx.RequestError as exc:
+            raise MiraklAPIError(
+                f"Mirakl API network error: POST {path}",
+                account_id=str(self._account.id),
+                detail=str(exc),
+            ) from exc
+
+        if response.is_error:
+            raise MiraklAPIError(
+                f"Mirakl API returned {response.status_code}: POST {path}",
+                status_code=response.status_code,
+                account_id=str(self._account.id),
+                detail=response.text[:500],
+            )
+
         return response.json()
 
     async def _raw_request(

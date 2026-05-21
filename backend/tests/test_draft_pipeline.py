@@ -21,6 +21,7 @@ from app.services.classifier import ClassificationResult, MessageClassifier
 from app.services.draft_pipeline import DraftPipeline
 from app.services.encryption import encrypt
 from app.services.safety_rules import SafetyRules
+from app.services.smart_draft import SmartDraftService
 from app.services.template_engine import TemplateEngine
 
 
@@ -30,6 +31,7 @@ def make_pipeline(mock_llm: bool = True) -> DraftPipeline:
         classifier=MessageClassifier(mock_mode=mock_llm),
         template_engine=TemplateEngine(),
         safety_rules=SafetyRules(),
+        smart_draft_service=SmartDraftService(mock_mode=True),
     )
 
 
@@ -95,10 +97,11 @@ class TestPipelineGreenPath:
     async def test_green_thread_gets_draft_and_sent(
         self, db, pending_thread, shipping_template, pipeline_account
     ):
-        """GREEN thread with matching template gets drafted and auto-sent."""
+        """GREEN thread with matching template gets drafted and auto-sent when AUTO_SEND_ENABLED."""
+        from app.config import settings
         pipeline = make_pipeline()
 
-        with patch(
+        with patch.object(settings, "AUTO_SEND_ENABLED", True), patch(
             "app.services.draft_pipeline.MiraklClient"
         ) as mock_client_cls:
             mock_client = AsyncMock()
@@ -120,14 +123,40 @@ class TestPipelineGreenPath:
         assert pending_thread.risk_level == RiskLevel.GREEN
         assert pending_thread.category == "shipping_delay"
 
+    async def test_green_thread_stays_pending_when_auto_send_disabled(
+        self, db, pending_thread, shipping_template
+    ):
+        """GREEN thread is drafted but NOT sent when AUTO_SEND_ENABLED is False."""
+        from app.config import settings
+        pipeline = make_pipeline()
+
+        with patch.object(settings, "AUTO_SEND_ENABLED", False), patch(
+            "app.services.draft_pipeline.MiraklClient"
+        ) as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.fetch_order = AsyncMock(return_value={})
+            mock_client.send_reply = AsyncMock(return_value={"status": "sent"})
+            mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            await pipeline.process_new_threads(db)
+
+        await db.refresh(pending_thread)
+        assert pending_thread.status == ThreadStatus.PENDING_REVIEW
+        assert pending_thread.drafted_response is not None  # draft was still generated
+        mock_client.send_reply.assert_not_called()  # but nothing was sent
+
     async def test_auto_send_failure_marks_thread_failed(
         self, db, pending_thread, shipping_template
     ):
         """When Mirakl send_reply raises, the thread status becomes FAILED."""
+        from app.config import settings
         from app.core.exceptions import MiraklAPIError
         pipeline = make_pipeline()
 
-        with patch("app.services.draft_pipeline.MiraklClient") as mock_client_cls:
+        with patch.object(settings, "AUTO_SEND_ENABLED", True), patch(
+            "app.services.draft_pipeline.MiraklClient"
+        ) as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.fetch_order = AsyncMock(return_value={})
             mock_client.send_reply = AsyncMock(
@@ -144,8 +173,11 @@ class TestPipelineGreenPath:
 
 class TestPipelineRedPath:
 
-    async def test_red_thread_is_escalated(self, db, pipeline_account):
-        """RED classification → thread is immediately escalated, no draft."""
+    async def test_red_thread_stays_pending_for_human_handling(self, db, pipeline_account):
+        """RED classification → thread stays PENDING_REVIEW (no draft, human writes reply).
+
+        The UI surfaces the RED risk badge so the reviewer knows it's high-stakes.
+        """
         thread = SupportThread(
             id=uuid.uuid4(),
             mirakl_thread_id="MK-RED-001",
@@ -170,8 +202,9 @@ class TestPipelineRedPath:
             await pipeline.process_new_threads(db)
 
         await db.refresh(thread)
-        assert thread.status == ThreadStatus.ESCALATED
-        assert thread.drafted_response is None
+        assert thread.status == ThreadStatus.PENDING_REVIEW
+        assert thread.risk_level == RiskLevel.RED
+        assert thread.drafted_response is None  # no draft for RED — human writes it
 
 
 class TestPipelineOrangePath:
@@ -330,3 +363,84 @@ class TestPipelineAlreadyClassified:
         pipeline = make_pipeline()
         processed = await pipeline.process_new_threads(db)
         assert processed == 0
+
+
+class TestPipelineSmartDraftIntegration:
+
+    async def test_orange_thread_uses_smart_draft_service(
+        self, db, pipeline_account,
+    ):
+        """ORANGE threads go through SmartDraftService and get a draft."""
+        thread = SupportThread(
+            id=uuid.uuid4(),
+            mirakl_thread_id="MK-SMART-ORANGE-001",
+            mirakl_order_id="ORD-SMART-ORANGE-001",
+            marketplace_account_id=pipeline_account.id,
+            customer_message="I want to return the broken item I ordered.",
+            operator_required=False,
+            status=ThreadStatus.PENDING_REVIEW,
+            response_deadline=datetime.now(UTC) + timedelta(hours=24),
+        )
+        db.add(thread)
+        await db.flush()
+
+        # Use mock_mode SmartDraftService
+        pipeline = make_pipeline()
+
+        with patch("app.services.draft_pipeline.MiraklClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.fetch_order = AsyncMock(return_value={})
+            mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            await pipeline.process_new_threads(db)
+
+        await db.refresh(thread)
+        assert thread.status == ThreadStatus.PENDING_REVIEW
+        assert thread.risk_level == RiskLevel.ORANGE
+        # Smart draft service (mock_mode) produces a draft containing [MOCK DRAFT]
+        assert thread.drafted_response is not None
+        assert "[MOCK DRAFT]" in thread.drafted_response
+
+    async def test_green_thread_does_not_use_smart_draft_service(
+        self, db, pipeline_account, shipping_template,
+    ):
+        """GREEN threads do NOT use SmartDraftService — they use templates directly."""
+        thread = SupportThread(
+            id=uuid.uuid4(),
+            mirakl_thread_id="MK-GREEN-NO-SMART-001",
+            mirakl_order_id="ORD-GREEN-NO-SMART-001",
+            marketplace_account_id=pipeline_account.id,
+            customer_message="Where is my order? Tracking shows nothing.",
+            operator_required=False,
+            status=ThreadStatus.PENDING_REVIEW,
+            response_deadline=datetime.now(UTC) + timedelta(hours=48),
+        )
+        db.add(thread)
+        await db.flush()
+
+        # Create a SmartDraftService mock that tracks whether generate_draft is called
+        smart_draft_mock = AsyncMock(spec=SmartDraftService)
+        pipeline = DraftPipeline(
+            classifier=MessageClassifier(mock_mode=True),
+            template_engine=TemplateEngine(),
+            safety_rules=SafetyRules(),
+            smart_draft_service=smart_draft_mock,
+        )
+
+        with patch("app.services.draft_pipeline.MiraklClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.fetch_order = AsyncMock(return_value={
+                "id": "ORD-GREEN-NO-SMART-001",
+                "customer": {"firstname": "Test"},
+            })
+            mock_client.send_reply = AsyncMock(return_value={"status": "sent"})
+            mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            await pipeline.process_new_threads(db)
+
+        await db.refresh(thread)
+        assert thread.risk_level == RiskLevel.GREEN
+        # SmartDraftService.generate_draft should NOT have been called
+        smart_draft_mock.generate_draft.assert_not_called()

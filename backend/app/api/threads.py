@@ -18,13 +18,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import CurrentUser, require_admin_user
 from app.database import get_db
-from app.models.marketplace_account import MarketplaceAccount
 from app.models.support_thread import RiskLevel, SupportThread, ThreadStatus
+from app.models.thread_message import MessageDirection, MessageAuthorType, ThreadMessage
 from app.schemas.thread import (
     InsightResponse,
     ThreadApproveRequest,
     ThreadEscalateRequest,
     ThreadListResponse,
+    ThreadMessageResponse,
     ThreadResponse,
     TranslateDraftRequest,
     TranslateDraftResponse,
@@ -106,7 +107,7 @@ async def get_thread(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> ThreadResponse:
     """Fetch a single support thread by its internal UUID."""
-    thread = await _get_thread_or_404(db, thread_id)
+    thread = await _get_thread_or_404(db, thread_id, load_messages=True)
     return _serialize_thread(thread)
 
 
@@ -184,6 +185,19 @@ async def approve_thread(
     thread.status = ThreadStatus.APPROVED
     thread.updated_at = datetime.now(UTC)
 
+    # Record the sent response as an outbound ThreadMessage
+    next_seq = thread.message_count + 1
+    outbound_msg = ThreadMessage(
+        id=uuid.uuid4(),
+        thread_id=thread.id,
+        direction=MessageDirection.OUTBOUND.value,
+        author_type=MessageAuthorType.SHOP_USER.value,
+        body=effective_response,
+        sequence_number=next_seq,
+    )
+    db.add(outbound_msg)
+    thread.message_count = next_seq
+
     await write_audit_log(
         db,
         action="human_approved",
@@ -236,6 +250,69 @@ async def escalate_thread(
         actor=current_user.audit_actor,
         thread_id=thread.id,
         detail={"reason": body.reason},
+    )
+
+    return _serialize_thread(thread)
+
+
+@router.post("/{thread_id}/reprocess", response_model=ThreadResponse)
+async def reprocess_thread(
+    thread_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[CurrentUser, Depends(require_admin_user)],
+) -> ThreadResponse:
+    """Reprocess a failed or escalated thread.
+
+    Resets the thread to PENDING_REVIEW with cleared classification and insight
+    data, allowing it to re-enter the automation pipeline. This operation is
+    idempotent: calling it multiple times on the same FAILED/ESCALATED thread
+    produces the same result.
+
+    Returns 409 if the thread has already been sent (APPROVED or SENT_AUTO),
+    since those outcomes cannot be reversed.
+    """
+    thread = await _get_thread_or_404(db, thread_id)
+
+    if thread.status in (ThreadStatus.APPROVED, ThreadStatus.SENT_AUTO):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Thread is in status {thread.status!r} and has already been sent. "
+                "Sent threads cannot be reprocessed."
+            ),
+        )
+
+    if thread.status not in (ThreadStatus.FAILED, ThreadStatus.ESCALATED):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Thread is in status {thread.status!r}. "
+                "Only FAILED or ESCALATED threads can be reprocessed."
+            ),
+        )
+
+    previous_status = thread.status.value
+
+    # Reset classification and draft fields
+    thread.status = ThreadStatus.PENDING_REVIEW
+    thread.risk_level = None
+    thread.category = None
+    thread.drafted_response = None
+
+    # Clear insight cache
+    thread.message_summary = None
+    thread.translated_message = None
+    thread.draft_summary = None
+    thread.draft_translated = None
+
+    thread.updated_at = datetime.now(UTC)
+
+    await write_audit_log(
+        db,
+        action="reprocess_initiated",
+        actor=current_user.audit_actor,
+        thread_id=thread.id,
+        detail={"previous_status": previous_status},
     )
 
     return _serialize_thread(thread)
@@ -402,12 +479,16 @@ async def translate_draft(
 async def _get_thread_or_404(
     db: AsyncSession,
     thread_id: uuid.UUID,
+    *,
+    load_messages: bool = False,
 ) -> SupportThread:
     stmt = (
         select(SupportThread)
         .options(selectinload(SupportThread.marketplace_account))
         .where(SupportThread.id == thread_id)
     )
+    if load_messages:
+        stmt = stmt.options(selectinload(SupportThread.messages))
     result = await db.execute(stmt)
     thread = result.scalar_one_or_none()
     if thread is None:
@@ -419,12 +500,47 @@ async def _get_thread_or_404(
 
 
 def _serialize_thread(thread: SupportThread) -> ThreadResponse:
+    from sqlalchemy import inspect as sa_inspect
+
     marketplace_name = (
         thread.marketplace_account.marketplace
         if thread.marketplace_account is not None
         else None
     )
-    extras: dict[str, str | None] = {"marketplace_name": marketplace_name}
-    extras["message_summary"] = getattr(thread, "message_summary", None)
-    extras["translated_message"] = getattr(thread, "translated_message", None)
-    return ThreadResponse.model_validate(thread).model_copy(update=extras)
+
+    # Include messages only when the relationship has been eagerly loaded.
+    # Check via SQLAlchemy's instance state to avoid triggering a lazy load.
+    state = sa_inspect(thread)
+    messages_loaded = "messages" not in state.unloaded
+    if messages_loaded:
+        messages = [
+            ThreadMessageResponse.model_validate(m) for m in thread.messages
+        ]
+    else:
+        messages = []
+
+    # Build the response bypassing Pydantic's from_attributes for the messages
+    # field, which would trigger a lazy load in async context.
+    return ThreadResponse(
+        id=thread.id,
+        mirakl_thread_id=thread.mirakl_thread_id,
+        mirakl_order_id=thread.mirakl_order_id,
+        marketplace_account_id=thread.marketplace_account_id,
+        marketplace_name=marketplace_name,
+        customer_language=thread.customer_language,
+        category=thread.category,
+        risk_level=thread.risk_level,
+        status=thread.status,
+        operator_required=thread.operator_required,
+        customer_message=thread.customer_message,
+        message_summary=getattr(thread, "message_summary", None),
+        translated_message=getattr(thread, "translated_message", None),
+        drafted_response=thread.drafted_response,
+        tracking_status=thread.tracking_status,
+        invoice_status=thread.invoice_status,
+        response_deadline=thread.response_deadline,
+        created_at=thread.created_at,
+        updated_at=thread.updated_at,
+        message_count=thread.message_count,
+        messages=messages,
+    )

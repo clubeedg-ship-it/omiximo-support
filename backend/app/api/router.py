@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends
 
 from app.api.alerts import router as alerts_router
 from app.api.classification import router as classification_router
+from app.api.knowledge import router as knowledge_router
 from app.api.marketplace_accounts import router as accounts_router
 from app.api.reports import router as reports_router
 from app.api.templates import router as templates_router
@@ -18,6 +19,7 @@ api_router.include_router(webhooks_router)
 protected_api_router.include_router(threads_router)
 protected_api_router.include_router(accounts_router)
 protected_api_router.include_router(templates_router)
+protected_api_router.include_router(knowledge_router)
 protected_api_router.include_router(alerts_router)
 protected_api_router.include_router(reports_router)
 protected_api_router.include_router(classification_router)

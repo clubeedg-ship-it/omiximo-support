@@ -14,7 +14,7 @@ interface ReviewPaneProps {
 }
 
 function canEditDraft(thread: Thread): boolean {
-  return thread.status === 'PENDING_REVIEW' && !thread.operator_required
+  return thread.status === 'PENDING_REVIEW'
 }
 
 export function ReviewPane({ thread }: ReviewPaneProps) {

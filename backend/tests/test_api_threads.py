@@ -11,6 +11,7 @@ from sqlalchemy import select
 
 from app.models.audit_log import AuditLog
 from app.models.support_thread import RiskLevel, SupportThread, ThreadStatus
+from app.models.thread_message import MessageDirection, MessageAuthorType, ThreadMessage
 
 
 class TestListThreads:
@@ -405,6 +406,214 @@ class TestEscalateThread:
         assert resp.status_code == 422
 
 
+class TestReprocessThread:
+
+    async def test_reprocess_failed_thread_succeeds(
+        self, client, db, sample_account
+    ):
+        """A FAILED thread can be reprocessed back to PENDING_REVIEW."""
+        failed_thread = SupportThread(
+            id=uuid.uuid4(),
+            mirakl_thread_id="MK-FAILED-REPROCESS",
+            mirakl_order_id="ORD-FAILED-REPROCESS",
+            marketplace_account_id=sample_account.id,
+            customer_message="Where is my order?",
+            category="shipping_delay",
+            risk_level=RiskLevel.GREEN,
+            status=ThreadStatus.FAILED,
+            operator_required=False,
+            drafted_response="Old draft.",
+            response_deadline=datetime.now(UTC) + timedelta(hours=24),
+        )
+        db.add(failed_thread)
+        await db.flush()
+
+        resp = await client.post(
+            f"/api/v1/threads/{failed_thread.id}/reprocess",
+            json={},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "PENDING_REVIEW"
+
+    async def test_reprocess_escalated_thread_succeeds(
+        self, client, db, sample_account
+    ):
+        """An ESCALATED thread can be reprocessed back to PENDING_REVIEW."""
+        escalated_thread = SupportThread(
+            id=uuid.uuid4(),
+            mirakl_thread_id="MK-ESC-REPROCESS",
+            mirakl_order_id="ORD-ESC-REPROCESS",
+            marketplace_account_id=sample_account.id,
+            customer_message="Complicated complaint.",
+            category="complaint",
+            risk_level=RiskLevel.RED,
+            status=ThreadStatus.ESCALATED,
+            operator_required=False,
+            drafted_response="Some draft.",
+            response_deadline=datetime.now(UTC) + timedelta(hours=24),
+        )
+        db.add(escalated_thread)
+        await db.flush()
+
+        resp = await client.post(
+            f"/api/v1/threads/{escalated_thread.id}/reprocess",
+            json={},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "PENDING_REVIEW"
+
+    async def test_reprocess_approved_thread_rejected(
+        self, client, db, sample_account
+    ):
+        """An APPROVED thread returns 409 — cannot reprocess already-sent."""
+        approved_thread = SupportThread(
+            id=uuid.uuid4(),
+            mirakl_thread_id="MK-APPROVED-REPROCESS",
+            mirakl_order_id="ORD-APPROVED-REPROCESS",
+            marketplace_account_id=sample_account.id,
+            customer_message="Order question.",
+            status=ThreadStatus.APPROVED,
+            operator_required=False,
+            response_deadline=datetime.now(UTC) + timedelta(hours=24),
+        )
+        db.add(approved_thread)
+        await db.flush()
+
+        resp = await client.post(
+            f"/api/v1/threads/{approved_thread.id}/reprocess",
+            json={},
+        )
+        assert resp.status_code == 409
+
+    async def test_reprocess_sent_auto_thread_rejected(
+        self, client, db, sample_account
+    ):
+        """A SENT_AUTO thread returns 409 — cannot reprocess already-sent."""
+        sent_thread = SupportThread(
+            id=uuid.uuid4(),
+            mirakl_thread_id="MK-SENT-REPROCESS",
+            mirakl_order_id="ORD-SENT-REPROCESS",
+            marketplace_account_id=sample_account.id,
+            customer_message="Order question.",
+            status=ThreadStatus.SENT_AUTO,
+            operator_required=False,
+            response_deadline=datetime.now(UTC) + timedelta(hours=24),
+        )
+        db.add(sent_thread)
+        await db.flush()
+
+        resp = await client.post(
+            f"/api/v1/threads/{sent_thread.id}/reprocess",
+            json={},
+        )
+        assert resp.status_code == 409
+
+    async def test_reprocess_clears_classification(
+        self, client, db, sample_account
+    ):
+        """After reprocess, risk_level and category are None."""
+        failed_thread = SupportThread(
+            id=uuid.uuid4(),
+            mirakl_thread_id="MK-CLEAR-CLASS",
+            mirakl_order_id="ORD-CLEAR-CLASS",
+            marketplace_account_id=sample_account.id,
+            customer_message="Defective item received.",
+            category="defect_report",
+            risk_level=RiskLevel.ORANGE,
+            status=ThreadStatus.FAILED,
+            operator_required=False,
+            drafted_response="Template response.",
+            message_summary="Summary of message.",
+            translated_message="Translated text.",
+            draft_summary="Draft summary.",
+            draft_translated="Draft translated.",
+            response_deadline=datetime.now(UTC) + timedelta(hours=24),
+        )
+        db.add(failed_thread)
+        await db.flush()
+
+        resp = await client.post(
+            f"/api/v1/threads/{failed_thread.id}/reprocess",
+            json={},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["risk_level"] is None
+        assert data["category"] is None
+        assert data["drafted_response"] is None
+
+    async def test_reprocess_writes_audit_log(
+        self, client, db, sample_account
+    ):
+        """Reprocessing writes an audit log entry with action=reprocess_initiated."""
+        failed_thread = SupportThread(
+            id=uuid.uuid4(),
+            mirakl_thread_id="MK-AUDIT-REPROCESS",
+            mirakl_order_id="ORD-AUDIT-REPROCESS",
+            marketplace_account_id=sample_account.id,
+            customer_message="Issue.",
+            status=ThreadStatus.FAILED,
+            operator_required=False,
+            response_deadline=datetime.now(UTC) + timedelta(hours=24),
+        )
+        db.add(failed_thread)
+        await db.flush()
+
+        resp = await client.post(
+            f"/api/v1/threads/{failed_thread.id}/reprocess",
+            json={},
+        )
+        assert resp.status_code == 200
+
+        result = await db.execute(
+            select(AuditLog).where(
+                AuditLog.thread_id == failed_thread.id,
+                AuditLog.action == "reprocess_initiated",
+            )
+        )
+        log = result.scalar_one_or_none()
+        assert log is not None
+        assert log.actor == "admin@omiximo.nl"
+        assert log.detail_json["previous_status"] == "FAILED"
+
+    async def test_reprocess_nonexistent_thread_returns_404(self, client):
+        """Reprocessing a non-existent thread returns 404."""
+        resp = await client.post(
+            f"/api/v1/threads/{uuid.uuid4()}/reprocess",
+            json={},
+        )
+        assert resp.status_code == 404
+
+    async def test_reprocess_is_idempotent(
+        self, client, db, sample_account
+    ):
+        """Calling reprocess on an already-reprocessed (PENDING_REVIEW) thread returns 409.
+
+        This ensures idempotency in the sense that the endpoint does not error
+        in unexpected ways — it explicitly rejects threads not in FAILED/ESCALATED.
+        """
+        pending_thread = SupportThread(
+            id=uuid.uuid4(),
+            mirakl_thread_id="MK-IDEMPOTENT",
+            mirakl_order_id="ORD-IDEMPOTENT",
+            marketplace_account_id=sample_account.id,
+            customer_message="Already pending.",
+            status=ThreadStatus.PENDING_REVIEW,
+            operator_required=False,
+            response_deadline=datetime.now(UTC) + timedelta(hours=24),
+        )
+        db.add(pending_thread)
+        await db.flush()
+
+        resp = await client.post(
+            f"/api/v1/threads/{pending_thread.id}/reprocess",
+            json={},
+        )
+        assert resp.status_code == 409
+
+
 class TestTranslateDraftEndpoint:
     """Tests for POST /{thread_id}/translate-draft.
 
@@ -644,6 +853,168 @@ class TestTranslateDraftEndpoint:
         data = resp.json()
         assert data["correction_made"] is False
         assert data["correction_note"] == ""
+
+
+class TestThreadMessages:
+    """Tests for multi-message conversation support in thread endpoints."""
+
+    async def test_thread_detail_includes_messages(
+        self, client, db, sample_account
+    ):
+        """GET /threads/{id} should return messages array with the initial message."""
+        thread = SupportThread(
+            id=uuid.uuid4(),
+            mirakl_thread_id="MK-MSG-DETAIL",
+            mirakl_order_id="ORD-MSG-DETAIL",
+            marketplace_account_id=sample_account.id,
+            customer_message="Hello, where is my order?",
+            status=ThreadStatus.PENDING_REVIEW,
+            operator_required=False,
+            response_deadline=datetime.now(UTC) + timedelta(hours=24),
+            message_count=1,
+        )
+        db.add(thread)
+        await db.flush()
+
+        # Add a ThreadMessage
+        msg = ThreadMessage(
+            id=uuid.uuid4(),
+            thread_id=thread.id,
+            direction=MessageDirection.INBOUND.value,
+            author_type=MessageAuthorType.CUSTOMER.value,
+            body="Hello, where is my order?",
+            sequence_number=1,
+        )
+        db.add(msg)
+        await db.flush()
+
+        resp = await client.get(f"/api/v1/threads/{thread.id}")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "messages" in data
+        assert len(data["messages"]) == 1
+        assert data["messages"][0]["direction"] == "INBOUND"
+        assert data["messages"][0]["author_type"] == "CUSTOMER"
+        assert data["messages"][0]["body"] == "Hello, where is my order?"
+        assert data["messages"][0]["sequence_number"] == 1
+
+    async def test_thread_list_includes_message_count(
+        self, client, db, sample_account
+    ):
+        """GET /threads list response should include message_count but not messages."""
+        thread = SupportThread(
+            id=uuid.uuid4(),
+            mirakl_thread_id="MK-MSG-LIST",
+            mirakl_order_id="ORD-MSG-LIST",
+            marketplace_account_id=sample_account.id,
+            customer_message="Test",
+            status=ThreadStatus.PENDING_REVIEW,
+            operator_required=False,
+            response_deadline=datetime.now(UTC) + timedelta(hours=24),
+            message_count=3,
+        )
+        db.add(thread)
+        await db.flush()
+
+        resp = await client.get("/api/v1/threads")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["items"][0]["message_count"] == 3
+        # List endpoint should return empty messages (not eagerly loaded)
+        assert data["items"][0]["messages"] == []
+
+    async def test_approve_creates_outbound_message(
+        self, client, db, sample_account
+    ):
+        """After approving, a new OUTBOUND ThreadMessage should be created."""
+        thread = SupportThread(
+            id=uuid.uuid4(),
+            mirakl_thread_id="MK-MSG-APPROVE",
+            mirakl_order_id="ORD-MSG-APPROVE",
+            marketplace_account_id=sample_account.id,
+            customer_message="Where is my order?",
+            risk_level=RiskLevel.GREEN,
+            status=ThreadStatus.PENDING_REVIEW,
+            operator_required=False,
+            drafted_response="Dear customer, your order is on its way.",
+            response_deadline=datetime.now(UTC) + timedelta(hours=24),
+            message_count=1,
+        )
+        db.add(thread)
+        await db.flush()
+
+        with patch("app.api.threads.MiraklClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.send_reply = AsyncMock(return_value={})
+            mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            resp = await client.put(
+                f"/api/v1/threads/{thread.id}/approve",
+                json={},
+            )
+
+        assert resp.status_code == 200
+
+        # Check that a ThreadMessage was created
+        result = await db.execute(
+            select(ThreadMessage).where(
+                ThreadMessage.thread_id == thread.id,
+                ThreadMessage.direction == MessageDirection.OUTBOUND.value,
+            )
+        )
+        outbound_msg = result.scalar_one_or_none()
+        assert outbound_msg is not None
+        assert outbound_msg.author_type == MessageAuthorType.SHOP_USER.value
+        assert outbound_msg.body == "Dear customer, your order is on its way."
+        assert outbound_msg.sequence_number == 2
+
+        # Check message_count was incremented
+        await db.refresh(thread)
+        assert thread.message_count == 2
+
+    async def test_thread_messages_ordered_by_sequence(
+        self, client, db, sample_account
+    ):
+        """Messages should be returned in sequence_number order."""
+        thread = SupportThread(
+            id=uuid.uuid4(),
+            mirakl_thread_id="MK-MSG-ORDER",
+            mirakl_order_id="ORD-MSG-ORDER",
+            marketplace_account_id=sample_account.id,
+            customer_message="Follow-up question",
+            status=ThreadStatus.PENDING_REVIEW,
+            operator_required=False,
+            response_deadline=datetime.now(UTC) + timedelta(hours=24),
+            message_count=3,
+        )
+        db.add(thread)
+        await db.flush()
+
+        # Insert messages out of order to verify ordering
+        for seq, body in [(3, "Third message"), (1, "First message"), (2, "Second message")]:
+            msg = ThreadMessage(
+                id=uuid.uuid4(),
+                thread_id=thread.id,
+                direction=MessageDirection.INBOUND.value if seq % 2 == 1 else MessageDirection.OUTBOUND.value,
+                author_type=MessageAuthorType.CUSTOMER.value if seq % 2 == 1 else MessageAuthorType.SHOP_USER.value,
+                body=body,
+                sequence_number=seq,
+            )
+            db.add(msg)
+        await db.flush()
+
+        resp = await client.get(f"/api/v1/threads/{thread.id}")
+        assert resp.status_code == 200
+        data = resp.json()
+        messages = data["messages"]
+        assert len(messages) == 3
+        assert messages[0]["sequence_number"] == 1
+        assert messages[0]["body"] == "First message"
+        assert messages[1]["sequence_number"] == 2
+        assert messages[1]["body"] == "Second message"
+        assert messages[2]["sequence_number"] == 3
+        assert messages[2]["body"] == "Third message"
 
 
 class TestHealthEndpoint:

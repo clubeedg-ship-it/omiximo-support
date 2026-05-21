@@ -57,6 +57,8 @@ class Settings(BaseSettings):
     LLM_MODEL: str = "anthropic/claude-sonnet-4"
     LLM_API_BASE_URL: str = "https://openrouter.ai/api/v1"
     INSIGHT_LLM_MODEL: str = "google/gemini-2.5-flash"
+    SMART_DRAFT_TEMPERATURE: float = 0.3
+    SMART_DRAFT_MAX_TOKENS: int = 800
 
     # ------------------------------------------------------------------ #
     # Mirakl Connect (centralized OAuth2 API)                             #
@@ -71,6 +73,19 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------ #
     MIRAKL_POLL_INTERVAL_SECONDS: int = 300
     MIRAKL_WEBHOOK_SECRET: str = ""
+
+    # ------------------------------------------------------------------ #
+    # Workflow behaviour                                                   #
+    # ------------------------------------------------------------------ #
+    # When True, classified GREEN threads are sent automatically without
+    # human approval. When False, ALL threads stay in PENDING_REVIEW and
+    # require a human to click approve.
+    AUTO_SEND_ENABLED: bool = False
+
+    # When True, threads that pass their response_deadline are auto-moved
+    # to ESCALATED status by a background cron. When False, threads stay
+    # in PENDING_REVIEW indefinitely and overdue ones get a UI badge.
+    SLA_AUTO_ESCALATE_ENABLED: bool = False
 
     # ------------------------------------------------------------------ #
     # CORS                                                                 #

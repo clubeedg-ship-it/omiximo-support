@@ -398,8 +398,8 @@ class TestFetchOrder:
 
 class TestSendReply:
 
-    async def test_send_reply_posts_to_correct_path(self):
-        """send_reply POSTs to /channels/v1/threads/{thread_id}/message."""
+    async def test_send_reply_posts_to_conversations_endpoint(self):
+        """send_reply POSTs to /conversations/{thread_id}/messages."""
         client = MiraklConnectClient()
         client._token = "tok"
         client._token_expires_at = time.monotonic() + 3600
@@ -414,11 +414,10 @@ class TestSendReply:
         method = call_args.args[0]
         url = call_args.args[1]
         assert method == "POST"
-        assert "TH-55" in url
-        assert "message" in url
+        assert "/conversations/TH-55/messages" in url
 
-    async def test_send_reply_includes_body_in_payload(self):
-        """send_reply sends the message body in the JSON payload."""
+    async def test_send_reply_uses_multipart_not_json(self):
+        """send_reply sends multipart/form-data with files=, not json=."""
         client = MiraklConnectClient()
         client._token = "tok"
         client._token_expires_at = time.monotonic() + 3600
@@ -430,7 +429,51 @@ class TestSendReply:
             await client.send_reply("TH-99", "Your order is on its way")
 
         call_kwargs = mock_request.call_args.kwargs
-        assert call_kwargs.get("json", {}).get("body") == "Your order is on its way"
+        assert "files" in call_kwargs
+        assert "json" not in call_kwargs
+
+    async def test_send_reply_message_input_contains_body(self):
+        """The message_input multipart part contains the correct JSON structure."""
+        import json
+
+        client = MiraklConnectClient()
+        client._token = "tok"
+        client._token_expires_at = time.monotonic() + 3600
+
+        api_response = _make_api_response({})
+        mock_request = AsyncMock(return_value=api_response)
+
+        with patch.object(client._http, "request", new=mock_request):
+            await client.send_reply("TH-99", "Your order is on its way")
+
+        call_kwargs = mock_request.call_args.kwargs
+        files = call_kwargs["files"]
+        # files format: {"message_input": (None, json_string, "application/json")}
+        message_input_tuple = files["message_input"]
+        assert message_input_tuple[0] is None  # filename
+        assert message_input_tuple[2] == "application/json"  # content type
+        payload = json.loads(message_input_tuple[1])
+        assert payload["body"] == "Your order is on its way"
+        # Connect API does NOT include "to" field
+        assert "to" not in payload
+
+    async def test_connect_send_reply_omits_content_type_header(self):
+        """send_reply headers include Authorization and Accept but NOT Content-Type."""
+        client = MiraklConnectClient()
+        client._token = "tok"
+        client._token_expires_at = time.monotonic() + 3600
+
+        api_response = _make_api_response({})
+        mock_request = AsyncMock(return_value=api_response)
+
+        with patch.object(client._http, "request", new=mock_request):
+            await client.send_reply("TH-99", "test")
+
+        call_kwargs = mock_request.call_args.kwargs
+        headers = call_kwargs["headers"]
+        assert "Authorization" in headers
+        assert "Accept" in headers
+        assert "Content-Type" not in headers
 
 
 # --------------------------------------------------------------------------- #
@@ -500,18 +543,81 @@ class TestLegacyMiraklClient:
             client._assert_open()
 
     async def test_send_reply_calls_correct_endpoint(self):
-        """_LegacyMiraklClient.send_reply posts to /api/messages/threads/{id}/reply."""
+        """_LegacyMiraklClient.send_reply posts to /api/inbox/threads/{id}/message."""
         account = _make_legacy_account()
 
         reply_response = MagicMock()
         reply_response.is_error = False
         reply_response.json.return_value = {"status": "sent"}
 
-        with patch("httpx.AsyncClient.request", new=AsyncMock(return_value=reply_response)):
+        mock_request = AsyncMock(return_value=reply_response)
+        with patch("httpx.AsyncClient.request", new=mock_request):
             async with _LegacyMiraklClient(account) as client:
                 result = await client.send_reply("TH-OLD-01", "Hello")
 
         assert result == {"status": "sent"}
+        call_args = mock_request.call_args
+        assert call_args.args[1] == "/api/inbox/threads/TH-OLD-01/message"
+
+    async def test_legacy_send_reply_uses_multipart_not_json(self):
+        """Legacy send_reply uses files= for multipart, not json=."""
+        account = _make_legacy_account()
+
+        reply_response = MagicMock()
+        reply_response.is_error = False
+        reply_response.json.return_value = {}
+
+        mock_request = AsyncMock(return_value=reply_response)
+        with patch("httpx.AsyncClient.request", new=mock_request):
+            async with _LegacyMiraklClient(account) as client:
+                await client.send_reply("TH-OLD-02", "Test message")
+
+        call_kwargs = mock_request.call_args.kwargs
+        assert "files" in call_kwargs
+        assert "json" not in call_kwargs
+
+    async def test_legacy_send_reply_includes_to_customer(self):
+        """Legacy send_reply message_input includes to: [{type: CUSTOMER}]."""
+        import json
+
+        account = _make_legacy_account()
+
+        reply_response = MagicMock()
+        reply_response.is_error = False
+        reply_response.json.return_value = {}
+
+        mock_request = AsyncMock(return_value=reply_response)
+        with patch("httpx.AsyncClient.request", new=mock_request):
+            async with _LegacyMiraklClient(account) as client:
+                await client.send_reply("TH-OLD-03", "Delivery update")
+
+        call_kwargs = mock_request.call_args.kwargs
+        files = call_kwargs["files"]
+        message_input_tuple = files["message_input"]
+        assert message_input_tuple[0] is None  # filename
+        assert message_input_tuple[2] == "application/json"  # content type
+        payload = json.loads(message_input_tuple[1])
+        assert payload["body"] == "Delivery update"
+        assert payload["to"] == [{"type": "CUSTOMER"}]
+
+    async def test_legacy_send_reply_omits_content_type_header(self):
+        """Legacy send_reply passes explicit headers without Content-Type."""
+        account = _make_legacy_account()
+
+        reply_response = MagicMock()
+        reply_response.is_error = False
+        reply_response.json.return_value = {}
+
+        mock_request = AsyncMock(return_value=reply_response)
+        with patch("httpx.AsyncClient.request", new=mock_request):
+            async with _LegacyMiraklClient(account) as client:
+                await client.send_reply("TH-OLD-04", "test")
+
+        call_kwargs = mock_request.call_args.kwargs
+        headers = call_kwargs["headers"]
+        assert "Authorization" in headers
+        assert "Accept" in headers
+        assert "Content-Type" not in headers
 
     async def test_http_error_raises_mirakl_api_error(self):
         """A 4xx response from the legacy API raises MiraklAPIError."""

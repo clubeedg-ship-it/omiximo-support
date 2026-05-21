@@ -1,6 +1,6 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
-import { X, AlertTriangle, Clock, PackageSearch } from 'lucide-react'
+import { X, AlertTriangle, Clock, PackageSearch, ChevronDown } from 'lucide-react'
 import { useAlerts } from '@/hooks/use-alerts'
 import { cn } from '@/lib/utils'
 
@@ -15,6 +15,20 @@ interface BannerProps {
 }
 
 function Banner({ variant, icon, message, links, onDismiss }: BannerProps) {
+  const [open, setOpen] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    function handleClickOutside(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => { document.removeEventListener('mousedown', handleClickOutside) }
+  }, [open])
+
   const variantClasses: Record<typeof variant, string> = {
     red: 'bg-rose-50 border-rose-200 text-rose-900 dark:bg-rose-950/40 dark:border-rose-800 dark:text-rose-200',
     amber: 'bg-amber-50 border-amber-200 text-amber-900 dark:bg-amber-950/40 dark:border-amber-800 dark:text-amber-200',
@@ -28,9 +42,21 @@ function Banner({ variant, icon, message, links, onDismiss }: BannerProps) {
   }
 
   const linkClasses: Record<typeof variant, string> = {
-    red: 'text-rose-700 underline hover:text-rose-900 dark:text-rose-300 dark:hover:text-rose-100',
-    amber: 'text-amber-700 underline hover:text-amber-900 dark:text-amber-300 dark:hover:text-amber-100',
-    blue: 'text-sky-700 underline hover:text-sky-900 dark:text-sky-300 dark:hover:text-sky-100',
+    red: 'text-rose-700 hover:text-rose-900 hover:bg-rose-100 dark:text-rose-300 dark:hover:text-rose-100 dark:hover:bg-rose-900/40',
+    amber: 'text-amber-700 hover:text-amber-900 hover:bg-amber-100 dark:text-amber-300 dark:hover:text-amber-100 dark:hover:bg-amber-900/40',
+    blue: 'text-sky-700 hover:text-sky-900 hover:bg-sky-100 dark:text-sky-300 dark:hover:text-sky-100 dark:hover:bg-sky-900/40',
+  }
+
+  const toggleClasses: Record<typeof variant, string> = {
+    red: 'text-rose-700 hover:bg-rose-100 dark:text-rose-300 dark:hover:bg-rose-900/40',
+    amber: 'text-amber-700 hover:bg-amber-100 dark:text-amber-300 dark:hover:bg-amber-900/40',
+    blue: 'text-sky-700 hover:bg-sky-100 dark:text-sky-300 dark:hover:bg-sky-900/40',
+  }
+
+  const popoverClasses: Record<typeof variant, string> = {
+    red: 'bg-white border-rose-200 dark:bg-slate-900 dark:border-rose-800',
+    amber: 'bg-white border-amber-200 dark:bg-slate-900 dark:border-amber-800',
+    blue: 'bg-white border-sky-200 dark:bg-slate-900 dark:border-sky-800',
   }
 
   const dismissClasses: Record<typeof variant, string> = {
@@ -41,32 +67,34 @@ function Banner({ variant, icon, message, links, onDismiss }: BannerProps) {
 
   return (
     <div
+      ref={containerRef}
       role="alert"
       className={cn(
-        'flex items-start gap-3 rounded-lg border px-4 py-3 text-sm',
+        'relative flex items-center gap-3 rounded-lg border px-4 py-2 text-sm',
         variantClasses[variant],
       )}
     >
-      <span className={cn('mt-0.5 shrink-0', iconClasses[variant])} aria-hidden="true">
+      <span className={cn('shrink-0', iconClasses[variant])} aria-hidden="true">
         {icon}
       </span>
-      <div className="flex-1 min-w-0">
-        <p className="font-medium">{message}</p>
-        {links.length > 0 && (
-          <ul className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
-            {links.map((link) => (
-              <li key={link.to}>
-                <Link
-                  to={link.to}
-                  className={cn('text-xs', linkClasses[variant])}
-                >
-                  {link.label}
-                </Link>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+      <p className="flex-1 min-w-0 font-medium truncate">{message}</p>
+      {links.length > 0 && (
+        <button
+          type="button"
+          onClick={() => { setOpen((v) => !v) }}
+          className={cn(
+            'shrink-0 inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium transition-colors',
+            toggleClasses[variant],
+          )}
+          aria-expanded={open}
+        >
+          {open ? 'Hide' : 'See all'}
+          <ChevronDown
+            className={cn('h-3 w-3 transition-transform', open && 'rotate-180')}
+            aria-hidden="true"
+          />
+        </button>
+      )}
       <button
         type="button"
         onClick={onDismiss}
@@ -75,6 +103,32 @@ function Banner({ variant, icon, message, links, onDismiss }: BannerProps) {
       >
         <X className="h-4 w-4" aria-hidden="true" />
       </button>
+
+      {open && links.length > 0 && (
+        <div
+          className={cn(
+            'absolute right-4 top-full z-20 mt-1 w-80 max-h-96 overflow-y-auto rounded-lg border shadow-lg',
+            popoverClasses[variant],
+          )}
+        >
+          <ul className="py-1 text-sm">
+            {links.map((link) => (
+              <li key={link.to}>
+                <Link
+                  to={link.to}
+                  onClick={() => { setOpen(false) }}
+                  className={cn(
+                    'block px-3 py-1.5 transition-colors',
+                    linkClasses[variant],
+                  )}
+                >
+                  {link.label}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   )
 }

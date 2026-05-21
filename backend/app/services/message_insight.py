@@ -27,6 +27,7 @@ from dataclasses import dataclass
 import httpx
 
 from app.config import settings
+from app.services.text_clean import strip_html
 
 logger = logging.getLogger(__name__)
 
@@ -142,8 +143,12 @@ class MessageInsightService:
         if self._mock_mode:
             return self._mock_insight(customer_message, detected_language)
 
+        cleaned_message = strip_html(customer_message)
+        if not cleaned_message:
+            return None
+
         try:
-            user_content = self._build_user_content(customer_message, detected_language)
+            user_content = self._build_user_content(cleaned_message, detected_language)
             raw_response = await self._call_llm(user_content, system_prompt=_SYSTEM_PROMPT)
             return self._parse_response(raw_response)
         except Exception as exc:

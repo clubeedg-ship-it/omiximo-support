@@ -10,6 +10,19 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.models.support_thread import CustomerLanguage, RiskLevel, ThreadStatus
 
 
+class ThreadMessageResponse(BaseModel):
+    """A single message within a thread conversation."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    direction: str
+    author_type: str
+    body: str
+    sequence_number: int
+    created_at: datetime
+
+
 class ThreadResponse(BaseModel):
     """Full representation of a support thread returned by the API."""
 
@@ -34,6 +47,8 @@ class ThreadResponse(BaseModel):
     response_deadline: datetime
     created_at: datetime
     updated_at: datetime
+    message_count: int = 1
+    messages: list[ThreadMessageResponse] = []
 
 
 class ThreadListResponse(BaseModel):

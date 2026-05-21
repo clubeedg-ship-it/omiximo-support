@@ -2,14 +2,18 @@
 
 from app.models.audit_log import AuditLog
 from app.models.classification_flag import ClassificationFlag
+from app.models.knowledge_entry import KnowledgeEntry
 from app.models.marketplace_account import MarketplaceAccount
 from app.models.response_template import ResponseTemplate
 from app.models.support_thread import SupportThread
+from app.models.thread_message import ThreadMessage
 
 __all__ = [
     "AuditLog",
     "ClassificationFlag",
+    "KnowledgeEntry",
     "MarketplaceAccount",
     "ResponseTemplate",
     "SupportThread",
+    "ThreadMessage",
 ]

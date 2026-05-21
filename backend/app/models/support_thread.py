@@ -15,6 +15,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Integer,
     String,
     Text,
     UniqueConstraint,
@@ -188,6 +189,18 @@ class SupportThread(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
+    message_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=1,
+        server_default="1",
+        comment="Denormalized count of ThreadMessage rows for this thread",
+    )
+    last_customer_message_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="Timestamp of the most recent inbound customer message",
+    )
 
     # Relationships
     marketplace_account: Mapped["MarketplaceAccount"] = relationship(  # noqa: F821
@@ -203,6 +216,12 @@ class SupportThread(Base):
         "ClassificationFlag",
         back_populates="thread",
         cascade="all, delete-orphan",
+    )
+    messages: Mapped[list["ThreadMessage"]] = relationship(  # noqa: F821
+        "ThreadMessage",
+        back_populates="thread",
+        cascade="all, delete-orphan",
+        order_by="ThreadMessage.sequence_number",
     )
 
     def __repr__(self) -> str:

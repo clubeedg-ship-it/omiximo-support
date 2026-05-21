@@ -1,5 +1,17 @@
 export type RiskLevel = 'GREEN' | 'ORANGE' | 'RED'
 
+export type MessageDirection = 'INBOUND' | 'OUTBOUND'
+export type MessageAuthorType = 'CUSTOMER' | 'SHOP_USER' | 'OPERATOR' | 'SYSTEM'
+
+export interface ThreadMessage {
+  id: string
+  direction: MessageDirection
+  author_type: MessageAuthorType
+  body: string
+  sequence_number: number
+  created_at: string
+}
+
 export type ThreadStatus =
   | 'PENDING_REVIEW'
   | 'APPROVED'
@@ -34,6 +46,8 @@ export interface Thread {
   status: ThreadStatus
   operator_required: boolean
   customer_message: string
+  messages?: ThreadMessage[]
+  message_count?: number
   drafted_response: string | null
   message_summary?: string | null
   translated_message?: string | null

@@ -46,19 +46,34 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
       - Cancel all background tasks gracefully
     """
     logger.info("Omiximo Support API starting up")
+    logger.info(
+        "Workflow settings: AUTO_SEND_ENABLED=%s SLA_AUTO_ESCALATE_ENABLED=%s",
+        settings.AUTO_SEND_ENABLED,
+        settings.SLA_AUTO_ESCALATE_ENABLED,
+    )
 
-    # Start all background tasks
-    polling_task = asyncio.create_task(_polling_loop(), name="mirakl_poller")
-    auto_send_task = asyncio.create_task(_auto_send_loop(), name="auto_send_executor")
-    sla_monitor_task = asyncio.create_task(_sla_monitor_loop(), name="sla_monitor")
+    # The polling loop is always on — it brings in new threads from Mirakl
+    tasks: list[asyncio.Task[None]] = [
+        asyncio.create_task(_polling_loop(), name="mirakl_poller"),
+    ]
+
+    if settings.AUTO_SEND_ENABLED:
+        tasks.append(asyncio.create_task(_auto_send_loop(), name="auto_send_executor"))
+    else:
+        logger.info("Auto-send disabled: all threads require human approval.")
+
+    if settings.SLA_AUTO_ESCALATE_ENABLED:
+        tasks.append(asyncio.create_task(_sla_monitor_loop(), name="sla_monitor"))
+    else:
+        logger.info("SLA auto-escalation disabled: threads stay in PENDING_REVIEW.")
 
     yield
 
     # Shutdown
     logger.info("Omiximo Support API shutting down — cancelling background tasks")
-    for task in (polling_task, auto_send_task, sla_monitor_task):
+    for task in tasks:
         task.cancel()
-    for task in (polling_task, auto_send_task, sla_monitor_task):
+    for task in tasks:
         try:
             await task
         except asyncio.CancelledError:

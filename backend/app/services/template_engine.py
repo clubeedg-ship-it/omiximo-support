@@ -21,6 +21,7 @@ Available Jinja2 slots (always passed in context):
   {{ shop_name }}         – Marketplace display name
   {{ customer_name }}     – Customer first name (may be empty string)
   {{ marketplace }}       – Marketplace brand name
+  {{ marketplace_name }} – Marketplace display name (alias for marketplace)
 """
 
 from __future__ import annotations
@@ -171,6 +172,7 @@ class TemplateEngine:
             "shop_name": "",
             "customer_name": "",
             "marketplace": "",
+            "marketplace_name": "",
         }
         safe_context.update(context)
 

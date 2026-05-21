@@ -7,6 +7,7 @@ import type { Thread } from '@/lib/types'
 import {
   formatRelativeTime,
   truncate,
+  stripHtml,
   calculateSlaStatus,
   cn,
 } from '@/lib/utils'
@@ -179,9 +180,20 @@ export function ThreadTable({ threads, isLoading, isError, onRefresh }: ThreadTa
                   <StatusBadge status={thread.status} />
                 </td>
                 <td className="px-4 py-3 max-w-sm">
-                  <p className="text-slate-600 dark:text-slate-400 text-xs leading-relaxed">
-                    {thread.message_summary ? truncate(thread.message_summary, 90) : truncate(thread.customer_message, 90)}
-                  </p>
+                  <div className="flex items-start gap-2">
+                    <p className="text-slate-600 dark:text-slate-400 text-xs leading-relaxed">
+                      {thread.message_summary ? truncate(thread.message_summary, 90) : truncate(stripHtml(thread.customer_message), 90)}
+                    </p>
+                    {thread.message_count !== undefined && thread.message_count > 1 && (
+                      <span
+                        className="shrink-0 inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500 dark:bg-slate-800 dark:text-slate-400"
+                        title={`${thread.message_count} messages in this thread`}
+                        aria-label={`${thread.message_count} messages`}
+                      >
+                        {thread.message_count}
+                      </span>
+                    )}
+                  </div>
                 </td>
                 <td className="px-4 py-3 text-right">
                   <Button

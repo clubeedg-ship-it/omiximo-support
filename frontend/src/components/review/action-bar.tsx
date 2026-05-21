@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { CheckCircle, AlertTriangle, Flag, Loader2 } from 'lucide-react'
+import { Send, CheckCircle, AlertTriangle, Flag, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -18,7 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { useApproveThread, useEscalateThread } from '@/hooks/use-mutation'
+import { useApproveThread } from '@/hooks/use-mutation'
 import {
   useClassifierCategories,
   useFlagMisclassification,
@@ -36,10 +36,7 @@ interface ActionBarProps {
 }
 
 export function ActionBar({ thread, draftedResponse, onSuccess }: ActionBarProps) {
-  const [showApproveDialog, setShowApproveDialog] = useState(false)
-  const [showEscalateDialog, setShowEscalateDialog] = useState(false)
   const [showFlagDialog, setShowFlagDialog] = useState(false)
-  const [escalateReason, setEscalateReason] = useState('')
 
   // Flag form state
   const [flagCategory, setFlagCategory] = useState<string>(thread.category ?? 'general_inquiry')
@@ -48,7 +45,6 @@ export function ActionBar({ thread, draftedResponse, onSuccess }: ActionBarProps
   const [flagReason, setFlagReason] = useState('')
 
   const approveMutation = useApproveThread(thread.id)
-  const escalateMutation = useEscalateThread(thread.id)
   const flagMutation = useFlagMisclassification(String(thread.id))
   const { data: classifierCategories } = useClassifierCategories()
 
@@ -63,36 +59,17 @@ export function ActionBar({ thread, draftedResponse, onSuccess }: ActionBarProps
     return [flagCategory, ...backendCategories]
   }, [classifierCategories, flagCategory])
 
-  const canApprove =
+  const canSend =
     thread.status === 'PENDING_REVIEW' &&
-    !thread.operator_required &&
     draftedResponse.trim().length > 0
 
-  const canEscalate =
-    thread.status === 'PENDING_REVIEW' || thread.status === 'FAILED'
-
-  const isActionable = canApprove || canEscalate
   const isTerminal = ['SENT_AUTO', 'ESCALATED', 'APPROVED'].includes(thread.status)
 
-  const handleApprove = () => {
+  const handleSend = () => {
     approveMutation.mutate(
       { drafted_response_override: draftedResponse || null },
       {
         onSuccess: () => {
-          setShowApproveDialog(false)
-          onSuccess()
-        },
-      },
-    )
-  }
-
-  const handleEscalate = () => {
-    escalateMutation.mutate(
-      { reason: escalateReason || 'Manual escalation' },
-      {
-        onSuccess: () => {
-          setShowEscalateDialog(false)
-          setEscalateReason('')
           onSuccess()
         },
       },
@@ -121,7 +98,7 @@ export function ActionBar({ thread, draftedResponse, onSuccess }: ActionBarProps
     <Button
       variant="outline"
       onClick={() => { setShowFlagDialog(true) }}
-      disabled={approveMutation.isPending || escalateMutation.isPending}
+      disabled={approveMutation.isPending}
       className="flex-1 sm:flex-none border-amber-300 text-amber-700 hover:bg-amber-50 hover:text-amber-800 dark:border-amber-700 dark:text-amber-400 dark:hover:bg-amber-900/20 dark:hover:text-amber-300"
       aria-label="Flag classification as incorrect"
     >
@@ -155,7 +132,7 @@ export function ActionBar({ thread, draftedResponse, onSuccess }: ActionBarProps
     )
   }
 
-  if (!isActionable) {
+  if (thread.status === 'PENDING_REVIEW' && !canSend) {
     return (
       <>
         <div
@@ -163,9 +140,7 @@ export function ActionBar({ thread, draftedResponse, onSuccess }: ActionBarProps
           role="note"
         >
           <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" aria-hidden="true" />
-          {thread.operator_required
-            ? 'This thread is flagged for operator handling and cannot be auto-approved.'
-            : 'Add a draft response to enable approval.'}
+          Write a response above to enable the Send button.
         </div>
         <div className="flex flex-wrap items-center gap-3 mt-2">
           {flagButton}
@@ -302,128 +277,28 @@ export function ActionBar({ thread, draftedResponse, onSuccess }: ActionBarProps
   return (
     <>
       <div className="flex flex-wrap items-center gap-3">
-        {canApprove && (
-          <Button
-            variant="success"
-            onClick={() => { setShowApproveDialog(true) }}
-            disabled={approveMutation.isPending || escalateMutation.isPending}
-            className="flex-1 sm:flex-none"
-            aria-label="Approve and send response"
-          >
-            <CheckCircle className="mr-2 h-4 w-4" aria-hidden="true" />
-            Approve &amp; Send
-          </Button>
-        )}
-
-        {canEscalate && (
-          <Button
-            variant="destructive"
-            onClick={() => { setShowEscalateDialog(true) }}
-            disabled={approveMutation.isPending || escalateMutation.isPending}
-            className="flex-1 sm:flex-none"
-            aria-label="Escalate thread for manual review"
-          >
-            <AlertTriangle className="mr-2 h-4 w-4" aria-hidden="true" />
-            Escalate
-          </Button>
-        )}
+        <Button
+          variant="success"
+          onClick={handleSend}
+          disabled={approveMutation.isPending || !canSend}
+          className="flex-1 sm:flex-none"
+          aria-label="Send response to customer"
+        >
+          {approveMutation.isPending ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
+              Sending...
+            </>
+          ) : (
+            <>
+              <Send className="mr-2 h-4 w-4" aria-hidden="true" />
+              Send Reply
+            </>
+          )}
+        </Button>
 
         {flagButton}
       </div>
-
-      {/* Approve confirmation dialog */}
-      <Dialog open={showApproveDialog} onOpenChange={setShowApproveDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Confirm Approval</DialogTitle>
-            <DialogDescription>
-              This will approve and queue the drafted response for sending to the customer
-              via Mirakl. This action cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="rounded-md bg-slate-50 p-3 dark:bg-slate-800">
-            <p className="text-xs text-slate-500 mb-1">Response preview:</p>
-            <p className="text-sm text-slate-700 dark:text-slate-300 whitespace-pre-wrap line-clamp-6">
-              {draftedResponse}
-            </p>
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => { setShowApproveDialog(false) }}
-              disabled={approveMutation.isPending}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="success"
-              onClick={handleApprove}
-              disabled={approveMutation.isPending}
-            >
-              {approveMutation.isPending ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
-                  Approving...
-                </>
-              ) : (
-                <>
-                  <CheckCircle className="mr-2 h-4 w-4" aria-hidden="true" />
-                  Confirm Approval
-                </>
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Escalate confirmation dialog */}
-      <Dialog open={showEscalateDialog} onOpenChange={setShowEscalateDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Escalate Thread</DialogTitle>
-            <DialogDescription>
-              This thread will be flagged for manual handling. Optionally provide
-              a reason to assist the escalation team.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2">
-            <Label htmlFor="escalate-reason">Reason (optional)</Label>
-            <Textarea
-              id="escalate-reason"
-              placeholder="E.g. Customer claims product is defective, requires inspection..."
-              value={escalateReason}
-              onChange={(e) => { setEscalateReason(e.target.value) }}
-              rows={4}
-            />
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => { setShowEscalateDialog(false) }}
-              disabled={escalateMutation.isPending}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={handleEscalate}
-              disabled={escalateMutation.isPending}
-            >
-              {escalateMutation.isPending ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
-                  Escalating...
-                </>
-              ) : (
-                <>
-                  <AlertTriangle className="mr-2 h-4 w-4" aria-hidden="true" />
-                  Confirm Escalation
-                </>
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {flagDialog()}
     </>

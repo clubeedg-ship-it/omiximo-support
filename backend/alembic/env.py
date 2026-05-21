@@ -14,7 +14,9 @@ from app.models.base import Base
 from app.models.marketplace_account import MarketplaceAccount  # noqa: F401
 from app.models.support_thread import SupportThread  # noqa: F401
 from app.models.audit_log import AuditLog  # noqa: F401
+from app.models.knowledge_entry import KnowledgeEntry  # noqa: F401
 from app.models.response_template import ResponseTemplate  # noqa: F401
+from app.models.thread_message import ThreadMessage  # noqa: F401
 
 config = context.config
 
