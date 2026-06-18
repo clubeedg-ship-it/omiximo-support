@@ -126,6 +126,19 @@ Both Connect and Legacy paths use `multipart/form-data` with a `message_input` J
 **Decision:** `text_clean.py` (backend) and `stripHtml` (frontend) remove Outlook/Gmail HTML noise before LLM calls and UI previews.
 **Rationale:** Mirakl threads contain raw HTML from email clients. LLM wastes tokens on markup; UI shows `<html><head>` noise.
 
+### 2026-06-12 · D-012 · Persist full conversation history, render as chat
+**Decision:** Ingestion now stores EVERY Mirakl message as a `ThreadMessage` (customer/shop/operator, original timestamp, sender name), keyed by `mirakl_message_id` for idempotent sync (migration 008 adds `mirakl_message_id` + `author_name`). `customer_message` stays the latest inbound customer body for the classifier/draft pipeline. The review page renders the messages as a Mirakl-style chat (avatars, sender→recipient, date separators, customer-left/shop-right, operator "not visible to customer" badge) with an Info sidebar. Dashboard defaults to ALL statuses sorted by `created_at` desc (newest first).
+**Rationale:** Old ingestion kept only the latest customer message and discarded the rest, so reviewers couldn't see what was said or who replied; and the deadline-asc default buried recent complaints behind 3yo+ threads. Existing 87 threads rebuilt by re-pulling from Mirakl (`scripts/backfill_thread_history.py`) — all 87 recovered, 534 messages, 0 missing.
+
+### 2026-06-12 · D-013 · Full inbox with live reply-state, sorted by activity
+**Decision:** The app is now a complete inbox, not just an unanswered-queue.
+- **Filter relaxed** (`message_filter`): reject only shop-only noise (no customer/operator message), so threads we already replied to stay visible. This grew the inbox from 87 → 111.
+- **`reply_state`** (migration 009, `SupportThread.reply_state`) derived from Mirakl `metadata.shop_reply_needed_since` + `last_sender`: NEEDS_REPLY / AWAITING_CUSTOMER / RESOLVED. The draft pipeline now ONLY processes NEEDS_REPLY threads (handled ones are imported but never drafted). Currently 6 NEEDS_REPLY, 105 AWAITING_CUSTOMER.
+- **`last_activity_at`** (migration 010) from Mirakl `metadata.last_message_date`; the dashboard now defaults to sorting by it (newest activity first), and the table shows "Last activity". `created_at`-desc buried threads that got a new message this week.
+- **Audit spam fixed**: the collector no longer writes a `message_filtered` audit row per noise thread per poll (it had reached tens of millions of rows). Pre-existing rows not yet pruned (see §E).
+- UI: Reply-state badge column + "All conversations" filter on the dashboard; Reply row in the review Info sidebar.
+**Rationale:** User couldn't see handled/resolved/paused threads, and "this week's" activity was invisible because the inbox sorted by original creation date. Verified: no genuinely-new customer complaints exist this week — only 2 shop-only noise threads (correctly filtered) + follow-ups on older threads (now surfaced by activity sort).
+
 ---
 
 ## §C — Roadmap & open questions
@@ -177,31 +190,31 @@ Migrations: 001 initial → 002 flags → 003 api_key optional → 004 message i
 
 > Overwrite per session.
 
-**Status:** System is functionally complete and deployed. 404 backend tests, 43 frontend tests, all passing. 97 real customer threads in inbox at PENDING_REVIEW. DB cleaned of 1567 noise threads (invoice emails, Zoho notifications, duplicates).
+**Status:** Backend 426 tests pass, frontend 43 tests pass. Migrations at 010. Inbox is now a complete view: **111 threads** (6 NEEDS_REPLY, 105 AWAITING_CUSTOMER), each with full conversation history and a live reply-state, sorted by last activity. System deployed at support.abbamarkt.nl. Changes from this session are NOT yet committed.
 
-**What was built this session:**
-1. Fixed Mirakl 415 send bug (multipart/form-data)
-2. Fixed marketplace_name template slot crash
-3. Added thread reprocess endpoint + bulk script
-4. Added message filter (blocks outbound/system noise at ingestion)
-5. Built knowledge base (model, API, service, 8 seed entries, migration 006)
-6. Built smart ORANGE drafting (LLM + knowledge + historical examples)
-7. Built conversation threading (thread_messages table, backfill, frontend timeline, migration 007)
-8. Killed auto-send + SLA auto-escalation (workflow toggles in config.py)
-9. Simplified UI: single "Send Reply" button, no escalate, no approval dialogs
-10. Fixed operator_required blocking edit/send
-11. Collapsed SLA alerts banner (popover instead of full-page)
-12. Added HTML stripping (text_clean.py + frontend stripHtml)
+**This session (2026-06-12):** See D-012 and D-013.
+- D-012: full conversation history at ingestion + Mirakl-style chat review page + backfill of the original 87 (534 messages).
+- D-013: relaxed the ingestion filter so handled threads stay visible (87→111); added `reply_state` (NEEDS_REPLY/AWAITING_CUSTOMER/RESOLVED, migration 009) derived from Mirakl metadata, gating the draft pipeline; added `last_activity_at` (migration 010) and made it the default dashboard sort; reply-state badge column + filter + review-sidebar row; stopped the per-poll `message_filtered` audit spam.
+- Verified there are NO genuinely-new customer complaints this week — only 2 shop-only noise threads (filtered) + follow-ups on older threads (now surfaced via activity sort).
 
-**Blockers:**
-1. **Mirakl credentials** — Connect OAuth (MIRAKL_CONNECT_CLIENT_ID/SECRET) not configured. Using legacy per-account API key. Polling may fail without valid creds.
-2. **Clerk auth** — Code installed but no Clerk app created. Running in dev-bypass mode (email domain allowlist). Works for single user.
+> NOTE: the 9 UI-audit fixes (pagination, sort, search, category labels, historical-SLA badge, reports default range) were implemented in a PRIOR session and are among the still-uncommitted working-tree changes.
 
-**What matters now:**
-1. Open the dashboard at `https://support.abbamarkt.nl` — verify 97 threads visible
-2. Open a thread → edit draft → click Send Reply → verify it reaches Mirakl
-3. If send works: the system is production-ready for manual operation
-4. If Mirakl rejects: check API key validity, check response in browser console
+**Next session — open follow-ups:**
+1. **Prune audit-log bloat:** the old per-poll `message_filtered` rows (~tens of millions) are still in `audit_log`. New writes are stopped (D-013); a one-off `DELETE FROM audit_log WHERE action='message_filtered'` would reclaim space — destructive, so confirm with user first.
+2. SLA "~3 years overdue" still renders in red in the review Info sidebar (`SlaIndicator`) — apply the dashboard's "Historical" treatment there too.
+3. Message attachments not captured/served — chat shows text only; needs file storage for attachment chips.
+4. StatsBar still shows status-based counts (per current page); consider a global "Needs reply" count.
+5. Commit the working tree (this session + prior uncommitted UI fixes) once the user approves.
+
+**DO NOT touch (user explicitly rejected):**
+- Status badge column — user says NOT redundant
+- Marketplace column — user has other marketplaces, this is a multi-marketplace product
+- Draft response visual layout — user says it looks nice
+- Flag Classification button — user says it's obvious
+
+**Blockers (unchanged):**
+1. Mirakl Connect credentials not configured (using legacy API key — confirmed: legacy `/api/inbox/threads` returns all 1686 threads incl. all 87 stored)
+2. Clerk auth not configured (running dev-bypass mode)
 
 ---
 
@@ -216,6 +229,10 @@ Migrations: 001 initial → 002 flags → 003 api_key optional → 004 message i
 - 2026-05-19 — Built conversation threading (multi-message), message filter
 - 2026-05-19 — Workflow simplification: killed auto-send/SLA crons, simplified UI
 - 2026-05-19 — Cleaned DB: 1567 noise threads removed, 19 duplicates removed, 97 real threads remain
+- 2026-05-21 — Fixed collector to use Mirakl original dates (not import timestamp), re-imported 87 threads with real dates (2022-2026)
+- 2026-05-21 — UI audit: identified 17 issues, user approved 9 fixes, rejected 4, left 4 unclear. Documented in §E.
+- 2026-05-21 — Added human-friendly relative time formatting (~3 months ago, ~1 year overdue)
+- 2026-05-21 — Rewrote CLAUDE.md + PROJECT.md in fd4ever format with §A-§G sections
 
 ### §F.2 — Durable lessons
 - Mirakl message API requires multipart/form-data, not JSON — cost 1233 failed auto-sends before discovery
@@ -225,6 +242,9 @@ Migrations: 001 initial → 002 flags → 003 api_key optional → 004 message i
 - operator_required blocking edit/send makes no sense when everything requires human approval — the flag is informational only
 - Jinja2 StrictUndefined + missing safe_context defaults = silent production failures — always include all template vars in defaults
 - HTML email content (Outlook, Gmail) in Mirakl threads must be stripped before LLM calls — wastes tokens and confuses summaries
+- Never suggest hiding UI columns because "only one value exists" — the system is multi-marketplace and will be shown to operators with 25+ marketplaces
+- Collector must use Mirakl's `date_created` for thread timestamps, not `datetime.now()` — import date is meaningless to the user
+- Don't present options (A/B/C) — pick the best one and do it. The user wants autonomous execution, not decision menus.
 
 ---
 

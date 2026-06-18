@@ -44,10 +44,10 @@ Retrieve a section: `sed -n '/^## §E/,/^## §F/p' PROJECT.md`
 
 ## 6. Current snapshot
 > Overwritten at session close.
-- branch: `main`
-- status: 404 backend tests pass, 43 frontend tests pass, 97 real threads in inbox
-- last: workflow simplification — killed auto-send/SLA crons, single "Send Reply" button, cleaned DB noise
-- next: configure Clerk auth (or keep dev-bypass for single-user), Mirakl Connect credentials for live polling
+- branch: `main` (working tree NOT yet committed)
+- status: 426 backend tests pass, 43 frontend tests pass, migrations at 010. Inbox = 111 threads (6 NEEDS_REPLY, 105 AWAITING_CUSTOMER), full history + live reply_state, sorted by last activity
+- last: D-012 (full history + chat review page + backfill) and D-013 (relaxed filter 87→111, reply_state migration 009, last_activity_at migration 010 + default sort, reply-state badge/filter, stopped audit spam)
+- next: prune old message_filtered audit rows (destructive—confirm first); SLA "~3yr overdue" in review sidebar; attachments not captured; commit working tree once approved (see PROJECT.md §E)
 
 ## 7. Pointer table
 | Anchor | Content | Cadence |

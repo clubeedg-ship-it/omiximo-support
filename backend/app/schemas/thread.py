@@ -18,6 +18,7 @@ class ThreadMessageResponse(BaseModel):
     id: uuid.UUID
     direction: str
     author_type: str
+    author_name: str | None = None
     body: str
     sequence_number: int
     created_at: datetime
@@ -38,6 +39,7 @@ class ThreadResponse(BaseModel):
     risk_level: RiskLevel | None
     status: ThreadStatus
     operator_required: bool
+    reply_state: str | None = None
     customer_message: str
     message_summary: str | None
     translated_message: str | None
@@ -47,6 +49,7 @@ class ThreadResponse(BaseModel):
     response_deadline: datetime
     created_at: datetime
     updated_at: datetime
+    last_activity_at: datetime | None = None
     message_count: int = 1
     messages: list[ThreadMessageResponse] = []
 

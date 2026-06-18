@@ -85,8 +85,11 @@ class MessageFilter:
             should be processed, returns ``(True, None)``. When rejected, returns
             ``(False, reason_string)`` explaining why the message was filtered.
         """
-        # Rule 1: Sender type check — reject messages from the shop/seller
-        reason = self._check_sender_type(raw_thread)
+        # Rule 1: Reject shop-only threads (pure outbound noise — e.g. invoice
+        # emails, notifications). A genuine conversation has at least one
+        # customer or operator message; we keep those even if WE replied last,
+        # so handled/resolved threads remain visible in the inbox.
+        reason = self._check_has_conversation(raw_thread)
         if reason is not None:
             return False, reason
 
@@ -107,29 +110,33 @@ class MessageFilter:
 
         return True, None
 
-    def _check_sender_type(self, raw_thread: dict[str, Any]) -> str | None:
-        """Reject if the most recent message in the thread is from the shop/seller.
+    def _check_has_conversation(self, raw_thread: dict[str, Any]) -> str | None:
+        """Reject threads that contain only shop/seller messages.
 
-        Mirakl M11 format: messages[].from.type can be SHOP_USER, CUSTOMER, or OPERATOR.
-        Legacy format: messages[].from_operator (bool), author_type (str).
+        A thread is a genuine support conversation if at least one message comes
+        from the customer or the marketplace operator. Threads with only shop
+        messages (invoice confirmations, auto-notifications) are noise.
 
-        We check the last message in the thread — that is the one being ingested.
+        Mirakl M11: messages[].from.type ∈ {CUSTOMER_USER, SHOP_USER, OPERATOR_USER}.
+        Legacy: messages[].from_operator (bool), author_type (str).
         """
         messages: list[dict[str, Any]] = raw_thread.get("messages", [])
         if not messages:
-            return None
+            return None  # nothing to judge here; later rules handle empties
 
-        last_message = messages[-1]
+        def _is_inbound(msg: dict[str, Any]) -> bool:
+            ftype = str((msg.get("from") or {}).get("type", "")).upper()
+            if ftype in ("CUSTOMER_USER", "CUSTOMER", "OPERATOR_USER", "OPERATOR"):
+                return True
+            if ftype in ("SHOP_USER", "SHOP"):
+                return False
+            # Legacy hints
+            if msg.get("from_operator", False):
+                return True
+            return msg.get("author_type", "") in ("buyer", "customer", "operator")
 
-        # M11 format: from.type field
-        sender_type = last_message.get("from", {}).get("type", "")
-        if sender_type == "SHOP_USER":
-            return "sender_is_shop: last message from.type=SHOP_USER"
-
-        # Legacy format: check author_type field
-        author_type = last_message.get("author_type", "")
-        if author_type in ("shop", "seller", "shop_user"):
-            return f"sender_is_shop: last message author_type={author_type}"
+        if not any(_is_inbound(m) for m in messages):
+            return "shop_only_thread: no customer or operator message (outbound noise)"
 
         return None
 

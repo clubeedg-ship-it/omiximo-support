@@ -1,13 +1,10 @@
 import { useState, useEffect } from 'react'
 import DOMPurify from 'dompurify'
-import { MessageSquare, Globe, Tag, Hash, Sparkles, ChevronRight, ChevronDown, Loader2, AlertCircle } from 'lucide-react'
+import { MessageSquare, Sparkles, ChevronRight, ChevronDown, Loader2, AlertCircle, EyeOff } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Separator } from '@/components/ui/separator'
-import { RiskBadge } from '@/components/threads/risk-badge'
-import { StatusBadge } from '@/components/threads/status-badge'
 import type { Thread, ThreadMessage, MessageAuthorType } from '@/lib/types'
 import { fetchThreadInsight, type InsightResponse } from '@/lib/api'
-import { formatDate, formatRelativeTime, getLanguageLabel } from '@/lib/utils'
+import { formatDate } from '@/lib/utils'
 
 function sanitizeHtml(raw: string): string {
   return DOMPurify.sanitize(raw, {
@@ -18,18 +15,6 @@ function sanitizeHtml(raw: string): string {
 
 interface MessagePanelProps {
   thread: Thread
-}
-
-function MetaItem({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
-  return (
-    <div className="flex items-start gap-2">
-      <div className="mt-0.5 text-slate-400 shrink-0" aria-hidden="true">{icon}</div>
-      <div>
-        <p className="text-xs text-slate-500 dark:text-slate-400">{label}</p>
-        <p className="text-sm font-medium text-slate-800 dark:text-slate-200">{value}</p>
-      </div>
-    </div>
-  )
 }
 
 type InsightState =
@@ -132,36 +117,85 @@ const AUTHOR_TYPE_LABELS: Record<MessageAuthorType, string> = {
   SYSTEM: 'System',
 }
 
+const AVATAR_STYLES: Record<MessageAuthorType, string> = {
+  CUSTOMER: 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200',
+  SHOP_USER: 'bg-emerald-200 text-emerald-800 dark:bg-emerald-800 dark:text-emerald-100',
+  OPERATOR: 'bg-amber-200 text-amber-900 dark:bg-amber-800 dark:text-amber-100',
+  SYSTEM: 'bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300',
+}
+
+function senderLabel(message: ThreadMessage): string {
+  return message.author_name?.trim() || AUTHOR_TYPE_LABELS[message.author_type]
+}
+
+function recipientLabel(message: ThreadMessage): string {
+  return message.direction === 'OUTBOUND' ? 'Customer' : 'Omiximo'
+}
+
+function avatarInitial(message: ThreadMessage): string {
+  const source = message.author_name?.trim() || AUTHOR_TYPE_LABELS[message.author_type]
+  return source.charAt(0).toUpperCase()
+}
+
+function formatDayLabel(dateString: string): string {
+  return new Intl.DateTimeFormat('en-GB', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  }).format(new Date(dateString))
+}
+
 function MessageBubble({ message }: { message: ThreadMessage }) {
   const isOutbound = message.direction === 'OUTBOUND'
-  const authorLabel = AUTHOR_TYPE_LABELS[message.author_type]
+  const isOperator = message.author_type === 'OPERATOR'
+
+  const bubbleStyle = isOutbound
+    ? 'border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-100'
+    : isOperator
+      ? 'border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-100'
+      : 'border-slate-200 bg-slate-50 text-slate-800 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-200'
 
   return (
-    <div className={`flex flex-col gap-1 ${isOutbound ? 'items-end' : 'items-start'}`}>
+    <div className={`flex flex-col gap-1.5 ${isOutbound ? 'items-end' : 'items-start'}`}>
       <div className={`flex items-center gap-2 ${isOutbound ? 'flex-row-reverse' : 'flex-row'}`}>
-        <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
-          {authorLabel}
-        </span>
-        <span className="text-xs text-slate-400 dark:text-slate-500" aria-label={`Sent at ${formatDate(message.created_at)}`}>
-          {formatRelativeTime(message.created_at)}
-        </span>
-      </div>
-      {isOutbound ? (
-        <div
-          className="max-w-[85%] rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm leading-relaxed text-emerald-900 dark:border-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-100 whitespace-pre-wrap"
-          role="article"
-          aria-label={`${authorLabel} message`}
+        <span
+          className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${AVATAR_STYLES[message.author_type]}`}
+          aria-hidden="true"
         >
-          {message.body}
+          {avatarInitial(message)}
+        </span>
+        <div className={`flex flex-wrap items-center gap-x-1.5 gap-y-0.5 ${isOutbound ? 'justify-end' : ''}`}>
+          <span className="text-xs font-semibold text-slate-700 dark:text-slate-200">
+            {senderLabel(message)}
+          </span>
+          <span className="text-xs text-slate-400 dark:text-slate-500">→ {recipientLabel(message)}</span>
+          {isOperator && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+              <EyeOff className="h-3 w-3" aria-hidden="true" />
+              Not visible to customer
+            </span>
+          )}
         </div>
-      ) : (
-        <blockquote
-          className="max-w-[85%] rounded-md border-l-4 border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-relaxed text-slate-800 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-200 whitespace-pre-wrap"
-          aria-label={`${authorLabel} message`}
-        >
-          {message.body}
-        </blockquote>
-      )}
+      </div>
+      <div
+        className={`max-w-[88%] rounded-lg border px-4 py-3 text-sm leading-relaxed ${bubbleStyle}`}
+        role="article"
+        aria-label={`${senderLabel(message)} message`}
+        dangerouslySetInnerHTML={{ __html: sanitizeHtml(message.body) }}
+      />
+      <span className="text-xs text-slate-400 dark:text-slate-500 tabular-nums">
+        {formatDate(message.created_at)}
+      </span>
+    </div>
+  )
+}
+
+function DateSeparator({ label }: { label: string }) {
+  return (
+    <div className="flex items-center justify-center" role="separator" aria-label={label}>
+      <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+        {label}
+      </span>
     </div>
   )
 }
@@ -169,64 +203,57 @@ function MessageBubble({ message }: { message: ThreadMessage }) {
 function ConversationTimeline({ messages }: { messages: ThreadMessage[] }) {
   const sorted = [...messages].sort((a, b) => a.sequence_number - b.sequence_number)
 
+  let lastDay = ''
   return (
     <div className="space-y-4" role="log" aria-label="Conversation timeline" aria-live="off">
-      {sorted.map((message) => (
-        <MessageBubble key={message.id} message={message} />
-      ))}
+      {sorted.map((message) => {
+        const day = formatDayLabel(message.created_at)
+        const showSeparator = day !== lastDay
+        lastDay = day
+        return (
+          <div key={message.id} className="space-y-4">
+            {showSeparator && <DateSeparator label={day} />}
+            <MessageBubble message={message} />
+          </div>
+        )
+      })}
     </div>
   )
 }
 
+function participantsLine(messages: ThreadMessage[]): string {
+  const seen = new Set<string>()
+  const names: string[] = []
+  for (const m of messages) {
+    const name = senderLabel(m)
+    if (!seen.has(name)) {
+      seen.add(name)
+      names.push(name)
+    }
+  }
+  return names.join(', ')
+}
+
 export function MessagePanel({ thread }: MessagePanelProps) {
-  const hasMessages = Array.isArray(thread.messages) && thread.messages.length > 0
+  const messages = Array.isArray(thread.messages) ? thread.messages : []
+  const hasMessages = messages.length > 0
 
   return (
     <Card>
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2 text-base">
           <MessageSquare className="h-4 w-4 text-slate-500" aria-hidden="true" />
-          {hasMessages ? 'Conversation' : 'Customer Message'}
+          Conversation
         </CardTitle>
+        {hasMessages && (
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            Participants: {participantsLine(messages)}
+          </p>
+        )}
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          <MetaItem
-            icon={<Hash className="h-3.5 w-3.5" />}
-            label="Order ID"
-            value={thread.mirakl_order_id}
-          />
-          <MetaItem
-            icon={<Tag className="h-3.5 w-3.5" />}
-            label="Category"
-            value={thread.category ?? '—'}
-          />
-          <MetaItem
-            icon={<Globe className="h-3.5 w-3.5" />}
-            label="Language"
-            value={thread.customer_language ? getLanguageLabel(thread.customer_language) : '—'}
-          />
-          <MetaItem
-            icon={<Globe className="h-3.5 w-3.5" />}
-            label="Marketplace"
-            value={thread.marketplace_name ?? `Account #${thread.marketplace_account_id}`}
-          />
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <RiskBadge risk={thread.risk_level} />
-          <StatusBadge status={thread.status} />
-          {thread.operator_required && (
-            <span className="inline-flex items-center rounded-full border border-rose-300 bg-rose-50 px-2.5 py-0.5 text-xs font-semibold text-rose-700 dark:border-rose-700 dark:bg-rose-900/20 dark:text-rose-300">
-              Operator Required
-            </span>
-          )}
-        </div>
-
-        <Separator />
-
         {hasMessages ? (
-          <ConversationTimeline messages={thread.messages!} />
+          <ConversationTimeline messages={messages} />
         ) : (
           <div>
             <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">

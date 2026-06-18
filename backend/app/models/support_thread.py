@@ -68,6 +68,23 @@ class ThreadStatus(str, enum.Enum):
     FAILED = "FAILED"
 
 
+class ReplyState(str, enum.Enum):
+    """Conversation state as reported by Mirakl, independent of the app's
+    send-workflow ``status``.
+
+    NEEDS_REPLY       – The customer is waiting on us (Mirakl
+                        ``shop_reply_needed_since`` is set). This is the only
+                        state the draft pipeline acts on.
+    AWAITING_CUSTOMER – We (or the operator) sent the last message; the ball is
+                        in the customer's court.
+    RESOLVED          – No reply needed and the conversation has settled.
+    """
+
+    NEEDS_REPLY = "NEEDS_REPLY"
+    AWAITING_CUSTOMER = "AWAITING_CUSTOMER"
+    RESOLVED = "RESOLVED"
+
+
 class SupportThread(Base):
     __tablename__ = "support_threads"
     __table_args__ = (
@@ -125,6 +142,12 @@ class SupportThread(Base):
         default=ThreadStatus.PENDING_REVIEW,
         index=True,
         comment="Lifecycle status of this thread",
+    )
+    reply_state: Mapped[str | None] = mapped_column(
+        String(20),
+        nullable=True,
+        index=True,
+        comment="Conversation state from Mirakl: NEEDS_REPLY / AWAITING_CUSTOMER / RESOLVED",
     )
     operator_required: Mapped[bool] = mapped_column(
         Boolean,
@@ -200,6 +223,12 @@ class SupportThread(Base):
         DateTime(timezone=True),
         nullable=True,
         comment="Timestamp of the most recent inbound customer message",
+    )
+    last_activity_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        index=True,
+        comment="Timestamp of the most recent message in the conversation (any sender)",
     )
 
     # Relationships

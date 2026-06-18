@@ -13,6 +13,7 @@ from app.models.marketplace_account import MarketplaceAccount
 from app.models.response_template import ResponseTemplate
 from app.models.support_thread import (
     CustomerLanguage,
+    ReplyState,
     RiskLevel,
     SupportThread,
     ThreadStatus,
@@ -64,6 +65,7 @@ async def pending_thread(db, pipeline_account) -> SupportThread:
         customer_message="Where is my order? Tracking shows nothing.",
         operator_required=False,
         status=ThreadStatus.PENDING_REVIEW,
+        reply_state=ReplyState.NEEDS_REPLY.value,
         response_deadline=datetime.now(UTC) + timedelta(hours=48),
     )
     db.add(thread)
@@ -186,6 +188,7 @@ class TestPipelineRedPath:
             customer_message="I demand a full refund and will sue your company.",
             operator_required=False,
             status=ThreadStatus.PENDING_REVIEW,
+            reply_state=ReplyState.NEEDS_REPLY.value,
             response_deadline=datetime.now(UTC) + timedelta(hours=24),
         )
         db.add(thread)
@@ -222,6 +225,7 @@ class TestPipelineOrangePath:
             customer_message="I want to return the item I ordered.",
             operator_required=False,
             status=ThreadStatus.PENDING_REVIEW,
+            reply_state=ReplyState.NEEDS_REPLY.value,
             response_deadline=datetime.now(UTC) + timedelta(hours=24),
         )
         db.add(thread)
@@ -269,6 +273,7 @@ class TestPipelineSafetyBlock:
             customer_message="Where is my order?",
             operator_required=False,
             status=ThreadStatus.PENDING_REVIEW,
+            reply_state=ReplyState.NEEDS_REPLY.value,
             response_deadline=datetime.now(UTC) + timedelta(hours=24),
         )
         db.add(thread)
@@ -318,6 +323,7 @@ class TestPipelineTemplateMissing:
             customer_message="Where is my order?",
             operator_required=False,
             status=ThreadStatus.PENDING_REVIEW,
+            reply_state=ReplyState.NEEDS_REPLY.value,
             response_deadline=datetime.now(UTC) + timedelta(hours=24),
         )
         db.add(thread)
@@ -354,6 +360,7 @@ class TestPipelineAlreadyClassified:
             customer_message="test",
             risk_level=RiskLevel.GREEN,  # Already classified
             status=ThreadStatus.PENDING_REVIEW,
+            reply_state=ReplyState.NEEDS_REPLY.value,
             operator_required=False,
             response_deadline=datetime.now(UTC) + timedelta(hours=24),
         )
@@ -379,6 +386,7 @@ class TestPipelineSmartDraftIntegration:
             customer_message="I want to return the broken item I ordered.",
             operator_required=False,
             status=ThreadStatus.PENDING_REVIEW,
+            reply_state=ReplyState.NEEDS_REPLY.value,
             response_deadline=datetime.now(UTC) + timedelta(hours=24),
         )
         db.add(thread)
@@ -414,6 +422,7 @@ class TestPipelineSmartDraftIntegration:
             customer_message="Where is my order? Tracking shows nothing.",
             operator_required=False,
             status=ThreadStatus.PENDING_REVIEW,
+            reply_state=ReplyState.NEEDS_REPLY.value,
             response_deadline=datetime.now(UTC) + timedelta(hours=48),
         )
         db.add(thread)

@@ -54,16 +54,11 @@ export function ReviewPane({ thread }: ReviewPaneProps) {
         </div>
       </div>
 
-      {/* Split layout: left = context, right = draft + actions */}
-      <div className="grid gap-4 lg:grid-cols-[1fr,1fr]">
-        {/* Left: customer message + order context */}
-        <div className="space-y-4" role="region" aria-label="Thread context">
+      {/* Mirakl-style layout: main = conversation + reply composer, right = Info */}
+      <div className="grid gap-4 lg:grid-cols-[1.6fr_1fr] lg:items-start">
+        {/* Main: conversation timeline, then the reply composer beneath it */}
+        <div className="space-y-4" role="region" aria-label="Conversation and reply">
           <MessagePanel thread={thread} />
-          <OrderContext thread={thread} />
-        </div>
-
-        {/* Right: draft editor + action bar */}
-        <div className="space-y-4" role="region" aria-label="Response draft and actions">
           <DraftEditor
             threadId={String(thread.id)}
             value={draftedResponse}
@@ -77,6 +72,11 @@ export function ReviewPane({ thread }: ReviewPaneProps) {
             draftedResponse={draftedResponse}
             onSuccess={handleSuccess}
           />
+        </div>
+
+        {/* Right: order/customer info sidebar */}
+        <div className="space-y-4 lg:sticky lg:top-4" role="region" aria-label="Order information">
+          <OrderContext thread={thread} />
         </div>
       </div>
     </div>

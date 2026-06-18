@@ -79,6 +79,17 @@ class ThreadMessage(Base):
         nullable=False,
         comment="Full message body text",
     )
+    mirakl_message_id: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+        index=True,
+        comment="Stable Mirakl message identifier; enables idempotent sync/backfill",
+    )
+    author_name: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+        comment="Display name of the message sender (who replied)",
+    )
     sequence_number: Mapped[int] = mapped_column(
         Integer,
         nullable=False,

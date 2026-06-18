@@ -26,7 +26,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.marketplace_account import MarketplaceAccount
-from app.models.support_thread import RiskLevel, SupportThread, ThreadStatus
+from app.models.support_thread import ReplyState, RiskLevel, SupportThread, ThreadStatus
 from app.services.audit import write_audit_log
 from app.services.classifier import ClassificationResult, MessageClassifier
 from app.services.mirakl_client import MiraklClient
@@ -64,6 +64,10 @@ class DraftPipeline:
         A thread is eligible for processing when:
           - status == PENDING_REVIEW
           - risk_level IS NULL (not yet classified)
+          - reply_state == NEEDS_REPLY (the customer is waiting on us)
+
+        Threads that are already handled (AWAITING_CUSTOMER / RESOLVED) are
+        imported for visibility but never classified or drafted.
 
         Args:
             db: Database session. This method commits after each thread.
@@ -74,6 +78,7 @@ class DraftPipeline:
         stmt = select(SupportThread).where(
             SupportThread.status == ThreadStatus.PENDING_REVIEW,
             SupportThread.risk_level.is_(None),
+            SupportThread.reply_state == ReplyState.NEEDS_REPLY.value,
         )
         result = await db.execute(stmt)
         threads = list(result.scalars().all())

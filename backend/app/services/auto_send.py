@@ -28,6 +28,7 @@ Architecture notes
 from __future__ import annotations
 
 import logging
+import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -37,6 +38,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.marketplace_account import MarketplaceAccount
 from app.models.support_thread import RiskLevel, SupportThread, ThreadStatus
+from app.models.thread_message import (
+    MessageAuthorType,
+    MessageDirection,
+    ThreadMessage,
+)
 from app.services.audit import write_audit_log
 from app.services.mirakl_client import MiraklClient
 from app.services.safety_rules import SafetyRules
@@ -312,6 +318,22 @@ class AutoSendExecutor:
 
         thread.status = ThreadStatus.SENT_AUTO
         thread.updated_at = datetime.now(UTC)
+
+        # Record the sent response as an outbound message so it appears in the
+        # conversation timeline (mirrors the manual-approve path).
+        next_seq = thread.message_count + 1
+        db.add(
+            ThreadMessage(
+                id=uuid.uuid4(),
+                thread_id=thread.id,
+                direction=MessageDirection.OUTBOUND.value,
+                author_type=MessageAuthorType.SHOP_USER.value,
+                body=drafted_response,
+                sequence_number=next_seq,
+            )
+        )
+        thread.message_count = next_seq
+
         await write_audit_log(
             db,
             action="auto_send_success",

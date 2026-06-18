@@ -1,14 +1,17 @@
 import { useNavigate } from 'react-router-dom'
-import { ArrowRight, AlertCircle, RefreshCw } from 'lucide-react'
+import { ArrowRight, AlertCircle, RefreshCw, CheckCircle, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { RiskBadge } from './risk-badge'
 import { StatusBadge } from './status-badge'
+import { ReplyStateBadge } from './reply-state-badge'
 import type { Thread } from '@/lib/types'
 import {
   formatRelativeTime,
   truncate,
   stripHtml,
   calculateSlaStatus,
+  getCategoryLabel,
   cn,
 } from '@/lib/utils'
 
@@ -17,6 +20,18 @@ interface ThreadTableProps {
   isLoading: boolean
   isError: boolean
   onRefresh: () => void
+  sortBy?: string
+  sortOrder?: 'asc' | 'desc'
+  onSort?: (column: string) => void
+}
+
+function RepliedHint() {
+  return (
+    <span className="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+      <CheckCircle className="h-3 w-3" aria-hidden="true" />
+      Replied
+    </span>
+  )
 }
 
 function SlaCell({ thread }: { thread: Thread }) {
@@ -25,6 +40,17 @@ function SlaCell({ thread }: { thread: Thread }) {
     thread.response_deadline,
     thread.marketplace_account?.sla_hours ?? 24,
   )
+
+  const isReplied = thread.status !== 'PENDING_REVIEW'
+
+  if (sla.isHistorical) {
+    return (
+      <div className="flex flex-col gap-1">
+        <Badge variant="slate">Historical</Badge>
+        {isReplied && <RepliedHint />}
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-col gap-1">
@@ -39,28 +65,41 @@ function SlaCell({ thread }: { thread: Thread }) {
       >
         {sla.label}
       </span>
-      <div className="h-1 w-16 rounded-full bg-slate-100 dark:bg-slate-700 overflow-hidden">
-        <div
-          className={cn(
-            'h-full rounded-full transition-all',
-            sla.urgency === 'overdue' && 'bg-rose-500',
-            sla.urgency === 'critical' && 'bg-rose-400',
-            sla.urgency === 'warning' && 'bg-amber-400',
-            sla.urgency === 'normal' && 'bg-emerald-400',
-          )}
-          style={{ width: `${sla.percentage}%` }}
-          role="progressbar"
-          aria-valuenow={sla.percentage}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-label={`SLA progress: ${sla.label}`}
-        />
-      </div>
+      {isReplied ? (
+        <RepliedHint />
+      ) : (
+        <div className="h-1 w-16 rounded-full bg-slate-100 dark:bg-slate-700 overflow-hidden">
+          <div
+            className={cn(
+              'h-full rounded-full transition-all',
+              sla.urgency === 'overdue' && 'bg-rose-500',
+              sla.urgency === 'critical' && 'bg-rose-400',
+              sla.urgency === 'warning' && 'bg-amber-400',
+              sla.urgency === 'normal' && 'bg-emerald-400',
+            )}
+            style={{ width: `${sla.percentage}%` }}
+            role="progressbar"
+            aria-valuenow={sla.percentage}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label={`SLA progress: ${sla.label}`}
+          />
+        </div>
+      )}
     </div>
   )
 }
 
-export function ThreadTable({ threads, isLoading, isError, onRefresh }: ThreadTableProps) {
+function SortIcon({ column, sortBy, sortOrder }: { column: string; sortBy?: string; sortOrder?: 'asc' | 'desc' }) {
+  if (sortBy !== column) {
+    return <ArrowUpDown className="h-3 w-3 opacity-0 group-hover:opacity-50 transition-opacity" aria-hidden="true" />
+  }
+  return sortOrder === 'asc'
+    ? <ArrowUp className="h-3 w-3" aria-hidden="true" />
+    : <ArrowDown className="h-3 w-3" aria-hidden="true" />
+}
+
+export function ThreadTable({ threads, isLoading, isError, onRefresh, sortBy, sortOrder, onSort }: ThreadTableProps) {
   const navigate = useNavigate()
 
   if (isLoading) {
@@ -103,6 +142,18 @@ export function ThreadTable({ threads, isLoading, isError, onRefresh }: ThreadTa
     )
   }
 
+  const sortable = (label: string, column: string) => (
+    <button
+      type="button"
+      className="inline-flex items-center gap-1 group"
+      onClick={() => onSort?.(column)}
+      aria-label={`Sort by ${label}`}
+    >
+      {label}
+      <SortIcon column={column} sortBy={sortBy} sortOrder={sortOrder} />
+    </button>
+  )
+
   return (
     <div className="rounded-lg border border-slate-200 bg-white overflow-hidden dark:border-slate-700 dark:bg-slate-900">
       <div className="overflow-x-auto">
@@ -110,25 +161,25 @@ export function ThreadTable({ threads, isLoading, isError, onRefresh }: ThreadTa
           <thead>
             <tr className="border-b border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/50">
               <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-400 whitespace-nowrap">
-                SLA
+                {sortable('SLA', 'response_deadline')}
               </th>
               <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-400 whitespace-nowrap">
-                Received
+                {sortable('Last activity', 'last_activity_at')}
               </th>
               <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-400 whitespace-nowrap">
                 Marketplace
               </th>
               <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-400 whitespace-nowrap">
-                Order ID
+                {sortable('Category', 'category')}
               </th>
               <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-400 whitespace-nowrap">
-                Category
+                {sortable('Risk', 'risk_level')}
               </th>
               <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-400 whitespace-nowrap">
-                Risk
+                {sortable('Status', 'status')}
               </th>
               <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-400 whitespace-nowrap">
-                Status
+                {sortable('Reply', 'reply_state')}
               </th>
               <th className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-400">
                 Message
@@ -158,26 +209,24 @@ export function ThreadTable({ threads, isLoading, isError, onRefresh }: ThreadTa
                   <SlaCell thread={thread} />
                 </td>
                 <td className="px-4 py-3 text-slate-500 dark:text-slate-400 whitespace-nowrap">
-                  {formatRelativeTime(thread.created_at)}
+                  {formatRelativeTime(thread.last_activity_at ?? thread.created_at)}
                 </td>
                 <td className="px-4 py-3 whitespace-nowrap">
                   <span className="font-medium text-slate-800 dark:text-slate-200">
                     {thread.marketplace_name ?? `Account #${thread.marketplace_account_id}`}
                   </span>
                 </td>
-                <td className="px-4 py-3">
-                  <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-mono text-slate-700 dark:bg-slate-800 dark:text-slate-300">
-                    {thread.mirakl_order_id}
-                  </code>
-                </td>
-                <td className="px-4 py-3 text-slate-600 dark:text-slate-400 whitespace-nowrap capitalize">
-                  {thread.category ?? '—'}
+                <td className="px-4 py-3 text-slate-600 dark:text-slate-400 whitespace-nowrap">
+                  {thread.category ? getCategoryLabel(thread.category) : '—'}
                 </td>
                 <td className="px-4 py-3">
                   <RiskBadge risk={thread.risk_level} />
                 </td>
                 <td className="px-4 py-3">
                   <StatusBadge status={thread.status} />
+                </td>
+                <td className="px-4 py-3">
+                  <ReplyStateBadge state={thread.reply_state} />
                 </td>
                 <td className="px-4 py-3 max-w-sm">
                   <div className="flex items-start gap-2">

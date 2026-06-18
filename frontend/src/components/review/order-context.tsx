@@ -1,7 +1,11 @@
-import { Package, FileText, Truck, Clock } from 'lucide-react'
+import { Package, FileText, Truck, Clock, Tag, Globe, Store } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { RiskBadge } from '@/components/threads/risk-badge'
+import { StatusBadge } from '@/components/threads/status-badge'
+import { ReplyStateBadge } from '@/components/threads/reply-state-badge'
 import { SlaIndicator } from '@/components/dashboard/sla-indicator'
+import { getCategoryLabel, getLanguageLabel } from '@/lib/utils'
 import type { Thread } from '@/lib/types'
 
 interface OrderContextProps {
@@ -47,7 +51,7 @@ export function OrderContext({ thread }: OrderContextProps) {
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2 text-base">
           <Package className="h-4 w-4 text-slate-500" aria-hidden="true" />
-          Order Context
+          Info
         </CardTitle>
       </CardHeader>
       <CardContent className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -56,6 +60,44 @@ export function OrderContext({ thread }: OrderContextProps) {
           label="Order ID"
           value={thread.mirakl_order_id}
         />
+        <ContextRow
+          icon={<Store className="h-4 w-4" />}
+          label="Marketplace"
+          value={thread.marketplace_name ?? `Account #${thread.marketplace_account_id}`}
+        />
+        <ContextRow
+          icon={<Tag className="h-4 w-4" />}
+          label="Reply"
+          badge={<ReplyStateBadge state={thread.reply_state} />}
+        />
+        <ContextRow
+          icon={<Tag className="h-4 w-4" />}
+          label="Status"
+          badge={<StatusBadge status={thread.status} />}
+        />
+        <ContextRow
+          icon={<Tag className="h-4 w-4" />}
+          label="Category"
+          value={thread.category ? getCategoryLabel(thread.category) : null}
+        />
+        <ContextRow
+          icon={<Tag className="h-4 w-4" />}
+          label="Risk"
+          badge={thread.risk_level ? <RiskBadge risk={thread.risk_level} /> : undefined}
+          value={thread.risk_level ? undefined : 'Not classified'}
+        />
+        <ContextRow
+          icon={<Globe className="h-4 w-4" />}
+          label="Language"
+          value={thread.customer_language ? getLanguageLabel(thread.customer_language) : null}
+        />
+        {thread.operator_required && (
+          <ContextRow
+            icon={<Store className="h-4 w-4" />}
+            label="Operator"
+            badge={<Badge variant="red">Operator Required</Badge>}
+          />
+        )}
         <ContextRow
           icon={<Truck className="h-4 w-4" />}
           label="Tracking Status"

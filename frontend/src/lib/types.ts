@@ -7,6 +7,7 @@ export interface ThreadMessage {
   id: string
   direction: MessageDirection
   author_type: MessageAuthorType
+  author_name?: string | null
   body: string
   sequence_number: number
   created_at: string
@@ -18,6 +19,8 @@ export type ThreadStatus =
   | 'SENT_AUTO'
   | 'ESCALATED'
   | 'FAILED'
+
+export type ReplyState = 'NEEDS_REPLY' | 'AWAITING_CUSTOMER' | 'RESOLVED'
 
 export type Language = 'nl' | 'en' | 'fr' | 'de'
 
@@ -44,6 +47,7 @@ export interface Thread {
   category: string | null
   risk_level: RiskLevel | null
   status: ThreadStatus
+  reply_state?: ReplyState | null
   operator_required: boolean
   customer_message: string
   messages?: ThreadMessage[]
@@ -56,6 +60,7 @@ export interface Thread {
   response_deadline: string
   created_at: string
   updated_at: string
+  last_activity_at?: string | null
 }
 
 export interface Template {
@@ -81,8 +86,11 @@ export interface AuditLog {
 export interface ThreadFilters {
   risk_level?: RiskLevel | ''
   status?: ThreadStatus | ''
+  reply_state?: ReplyState | ''
   marketplace_account_id?: string | ''
   search?: string
+  sort_by?: string
+  sort_order?: 'asc' | 'desc'
 }
 
 export interface ThreadsResponse {

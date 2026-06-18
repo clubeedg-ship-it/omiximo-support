@@ -46,10 +46,19 @@ async def list_threads(
     db: Annotated[AsyncSession, Depends(get_db)],
     risk_level: RiskLevel | None = Query(default=None),
     thread_status: ThreadStatus | None = Query(default=None, alias="status"),
+    reply_state: str | None = Query(
+        default=None,
+        pattern=r"^(NEEDS_REPLY|AWAITING_CUSTOMER|RESOLVED)$",
+    ),
     marketplace_account_id: uuid.UUID | None = Query(default=None),
     search: str | None = Query(default=None, min_length=1),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
+    sort_by: str = Query(
+        default="response_deadline",
+        pattern=r"^(response_deadline|created_at|last_activity_at|category|risk_level|status|reply_state)$",
+    ),
+    sort_order: str = Query(default="asc", pattern=r"^(asc|desc)$"),
 ) -> ThreadListResponse:
     """List support threads with optional filtering and pagination.
 
@@ -64,6 +73,8 @@ async def list_threads(
         filtered_stmt = filtered_stmt.where(SupportThread.risk_level == risk_level)
     if thread_status is not None:
         filtered_stmt = filtered_stmt.where(SupportThread.status == thread_status)
+    if reply_state is not None:
+        filtered_stmt = filtered_stmt.where(SupportThread.reply_state == reply_state)
     if marketplace_account_id is not None:
         filtered_stmt = filtered_stmt.where(
             SupportThread.marketplace_account_id == marketplace_account_id
@@ -84,10 +95,22 @@ async def list_threads(
 
     # Fetch page
     offset = (page - 1) * page_size
+    sort_column_map = {
+        "response_deadline": SupportThread.response_deadline,
+        "created_at": SupportThread.created_at,
+        "last_activity_at": SupportThread.last_activity_at,
+        "category": SupportThread.category,
+        "risk_level": SupportThread.risk_level,
+        "status": SupportThread.status,
+        "reply_state": SupportThread.reply_state,
+    }
+    sort_col = sort_column_map[sort_by]
+    order_clause = sort_col.desc() if sort_order == "desc" else sort_col.asc()
+
     data_stmt = (
         filtered_stmt
         .options(selectinload(SupportThread.marketplace_account))
-        .order_by(SupportThread.response_deadline.asc())
+        .order_by(order_clause.nulls_last())
         .offset(offset)
         .limit(page_size)
     )
@@ -532,6 +555,7 @@ def _serialize_thread(thread: SupportThread) -> ThreadResponse:
         risk_level=thread.risk_level,
         status=thread.status,
         operator_required=thread.operator_required,
+        reply_state=thread.reply_state,
         customer_message=thread.customer_message,
         message_summary=getattr(thread, "message_summary", None),
         translated_message=getattr(thread, "translated_message", None),
@@ -541,6 +565,7 @@ def _serialize_thread(thread: SupportThread) -> ThreadResponse:
         response_deadline=thread.response_deadline,
         created_at=thread.created_at,
         updated_at=thread.updated_at,
+        last_activity_at=thread.last_activity_at,
         message_count=thread.message_count,
         messages=messages,
     )

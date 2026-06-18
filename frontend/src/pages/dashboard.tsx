@@ -2,6 +2,13 @@ import { useState, useCallback, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { StatsBar } from '@/components/dashboard/stats-bar'
 import { AlertsBanner } from '@/components/dashboard/alerts-banner'
 import { ThreadFiltersBar } from '@/components/threads/thread-filters'
@@ -15,19 +22,37 @@ export function DashboardPage() {
 
   const [filters, setFilters] = useState<ThreadFilters>({
     risk_level: '',
-    status: 'PENDING_REVIEW',
+    status: '',
+    reply_state: '',
     marketplace_account_id: initialMarketplace ?? '',
     search: '',
   })
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(25)
+  const [sortBy, setSortBy] = useState('last_activity_at')
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
 
-  const { data: threadsData, isLoading, isError, refetch } = useThreads(filters)
+  const effectiveFilters: ThreadFilters = { ...filters, sort_by: sortBy, sort_order: sortOrder }
+  const { data: threadsData, isLoading, isError, refetch } = useThreads(effectiveFilters, page, pageSize)
   const { data: marketplaces = [] } = useMarketplaces()
 
   const threads = threadsData?.items ?? []
+  const totalPages = threadsData ? Math.max(1, Math.ceil(threadsData.total / pageSize)) : 1
 
   const handleFiltersChange = useCallback((newFilters: ThreadFilters) => {
     setFilters(newFilters)
+    setPage(1)
   }, [])
+
+  const handleSort = useCallback((column: string) => {
+    if (sortBy === column) {
+      setSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortBy(column)
+      setSortOrder('asc')
+    }
+    setPage(1)
+  }, [sortBy])
 
   const handleRefresh = useCallback(() => {
     void refetch()
@@ -86,14 +111,56 @@ export function DashboardPage() {
         isLoading={isLoading}
         isError={isError}
         onRefresh={handleRefresh}
+        sortBy={sortBy}
+        sortOrder={sortOrder}
+        onSort={handleSort}
       />
 
-      {/* Pagination info */}
-      {threadsData && threadsData.total > threadsData.items.length && (
-        <p className="text-center text-xs text-slate-400 dark:text-slate-500">
-          Showing {threadsData.items.length} of {threadsData.total} threads.
-          Refine your filters to narrow results.
-        </p>
+      {/* Pagination */}
+      {threadsData && threadsData.total > 0 && (
+        <nav className="flex flex-wrap items-center justify-between gap-4" aria-label="Pagination">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-500 dark:text-slate-400">Rows per page:</span>
+            <Select
+              value={String(pageSize)}
+              onValueChange={(v) => { setPageSize(Number(v)); setPage(1) }}
+            >
+              <SelectTrigger className="h-7 w-[70px] text-xs" aria-label="Rows per page">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="10">10</SelectItem>
+                <SelectItem value="25">25</SelectItem>
+                <SelectItem value="50">50</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <p className="text-xs text-slate-500 dark:text-slate-400 tabular-nums">
+            Page {page} of {totalPages} ({threadsData.total} total)
+          </p>
+
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => { setPage((p) => Math.max(1, p - 1)) }}
+              disabled={page === 1 || isLoading}
+              aria-label="Previous page"
+            >
+              Previous
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => { setPage((p) => Math.min(totalPages, p + 1)) }}
+              disabled={page >= totalPages || isLoading}
+              aria-label="Next page"
+            >
+              Next
+            </Button>
+          </div>
+        </nav>
       )}
     </div>
   )

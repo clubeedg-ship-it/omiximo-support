@@ -8,7 +8,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import type { ThreadFilters, RiskLevel, ThreadStatus, MarketplaceAccount } from '@/lib/types'
+import type { ThreadFilters, RiskLevel, ThreadStatus, ReplyState, MarketplaceAccount } from '@/lib/types'
 
 interface ThreadFiltersProps {
   filters: ThreadFilters
@@ -27,6 +27,13 @@ export function ThreadFiltersBar({ filters, marketplaces, onChange }: ThreadFilt
   const handleStatusChange = useCallback(
     (value: string) => {
       onChange({ ...filters, status: value === 'ALL' ? '' : (value as ThreadStatus) })
+    },
+    [filters, onChange],
+  )
+
+  const handleReplyStateChange = useCallback(
+    (value: string) => {
+      onChange({ ...filters, reply_state: value === 'ALL' ? '' : (value as ReplyState) })
     },
     [filters, onChange],
   )
@@ -57,6 +64,21 @@ export function ThreadFiltersBar({ filters, marketplaces, onChange }: ThreadFilt
           aria-label="Search threads"
         />
       </div>
+
+      <Select
+        value={filters.reply_state ? filters.reply_state : 'ALL'}
+        onValueChange={handleReplyStateChange}
+      >
+        <SelectTrigger className="w-[170px]" aria-label="Filter by reply state">
+          <SelectValue placeholder="Reply state" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="ALL">All conversations</SelectItem>
+          <SelectItem value="NEEDS_REPLY">Needs reply</SelectItem>
+          <SelectItem value="AWAITING_CUSTOMER">Awaiting customer</SelectItem>
+          <SelectItem value="RESOLVED">Resolved</SelectItem>
+        </SelectContent>
+      </Select>
 
       <Select
         value={filters.risk_level ?? 'ALL'}

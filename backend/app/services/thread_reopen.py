@@ -65,28 +65,48 @@ async def append_customer_message(
     thread.last_customer_message_at = now
     thread.updated_at = now
 
-    # Re-open if in a terminal state
-    if thread.status in _TERMINAL_STATES:
-        previous_status = thread.status
-        thread.status = ThreadStatus.PENDING_REVIEW
-        thread.risk_level = None
-        thread.category = None
-        thread.drafted_response = None
-        thread.message_summary = None
-        thread.translated_message = None
-        thread.draft_summary = None
-        thread.draft_translated = None
-
-        await write_audit_log(
-            db,
-            action="thread_reopened",
-            actor="system",
-            thread_id=thread.id,
-            detail={
-                "previous_status": previous_status.value,
-                "new_message_length": len(new_message),
-            },
-        )
+    await reopen_if_terminal(db, thread, new_message_length=len(new_message))
 
     await db.flush()
     return message
+
+
+async def reopen_if_terminal(
+    db: AsyncSession,
+    thread: SupportThread,
+    *,
+    new_message_length: int,
+) -> bool:
+    """Re-open a terminal thread so it re-enters the automation pipeline.
+
+    Clears the prior classification/draft/insight so the thread is reprocessed
+    cleanly, and writes a ``thread_reopened`` audit entry. No-op for threads
+    that are already active.
+
+    Returns:
+        ``True`` if the thread was re-opened, ``False`` otherwise.
+    """
+    if thread.status not in _TERMINAL_STATES:
+        return False
+
+    previous_status = thread.status
+    thread.status = ThreadStatus.PENDING_REVIEW
+    thread.risk_level = None
+    thread.category = None
+    thread.drafted_response = None
+    thread.message_summary = None
+    thread.translated_message = None
+    thread.draft_summary = None
+    thread.draft_translated = None
+
+    await write_audit_log(
+        db,
+        action="thread_reopened",
+        actor="system",
+        thread_id=thread.id,
+        detail={
+            "previous_status": previous_status.value,
+            "new_message_length": new_message_length,
+        },
+    )
+    return True

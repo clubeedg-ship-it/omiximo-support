@@ -111,12 +111,14 @@ class SLAMonitor:
             ascending (overdue the longest first).
         """
         now = datetime.now(UTC)
+        cutoff = now - timedelta(days=7)
 
         stmt = (
             select(SupportThread)
             .where(
                 SupportThread.status == ThreadStatus.PENDING_REVIEW,
                 SupportThread.response_deadline <= now,
+                SupportThread.response_deadline >= cutoff,
             )
             .order_by(SupportThread.response_deadline.asc())
         )

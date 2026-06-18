@@ -1,6 +1,6 @@
 import { clsx, type ClassValue } from 'clsx'
 import { twMerge } from 'tailwind-merge'
-import type { RiskLevel, ThreadStatus } from './types'
+import type { ReplyState, RiskLevel, ThreadStatus } from './types'
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -41,6 +41,7 @@ export interface SlaStatus {
   hoursRemaining: number
   minutesRemaining: number
   isOverdue: boolean
+  isHistorical: boolean
   urgency: 'normal' | 'warning' | 'critical' | 'overdue'
   label: string
   percentage: number
@@ -75,9 +76,13 @@ export function calculateSlaStatus(
   let urgency: SlaStatus['urgency']
   let label: string
 
+  const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000
+  let isHistorical = false
+
   if (isOverdue) {
     urgency = 'overdue'
     const overdueMs = Math.abs(remainingMs)
+    isHistorical = overdueMs > THIRTY_DAYS_MS
     const overdueDays = Math.floor(overdueMs / (1000 * 60 * 60 * 24))
     const overdueWeeks = Math.floor(overdueDays / 7)
     const overdueMonths = Math.floor(overdueDays / 30)
@@ -102,7 +107,7 @@ export function calculateSlaStatus(
     label = `${hoursRemaining}h left`
   }
 
-  return { hoursRemaining, minutesRemaining, isOverdue, urgency, label, percentage }
+  return { hoursRemaining, minutesRemaining, isOverdue, isHistorical, urgency, label, percentage }
 }
 
 export function getRiskLevelLabel(risk: RiskLevel): string {
@@ -123,6 +128,29 @@ export function getStatusLabel(status: ThreadStatus): string {
     FAILED: 'Failed',
   }
   return labels[status]
+}
+
+export function getReplyStateLabel(state: ReplyState): string {
+  const labels: Record<ReplyState, string> = {
+    NEEDS_REPLY: 'Needs reply',
+    AWAITING_CUSTOMER: 'Awaiting customer',
+    RESOLVED: 'Resolved',
+  }
+  return labels[state]
+}
+
+export function getCategoryLabel(category: string): string {
+  const labels: Record<string, string> = {
+    tracking_update: 'Tracking Update',
+    invoice_request: 'Invoice Request',
+    return_inquiry: 'Return Inquiry',
+    complaint: 'Complaint',
+    defect_report: 'Defect Report',
+    delivery_confirmation: 'Delivery Confirmation',
+    general_inquiry: 'General Inquiry',
+    uncategorized: 'Uncategorized',
+  }
+  return labels[category] ?? category.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
 export function getLanguageLabel(lang: string): string {

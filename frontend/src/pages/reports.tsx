@@ -9,7 +9,7 @@ import {
 } from '@/components/ui/select'
 import { useReportSummary, useReportTimeline } from '@/hooks/use-reports'
 import { useMarketplaces } from '@/hooks/use-threads'
-import { cn } from '@/lib/utils'
+import { cn, getCategoryLabel } from '@/lib/utils'
 import type { ReportParams, TimelineEntry } from '@/lib/types'
 
 // ---------------------------------------------------------------------------
@@ -356,9 +356,12 @@ const MARKETPLACE_PALETTE = [
 // ---------------------------------------------------------------------------
 
 const DAY_OPTIONS = [
+  { label: 'All time', value: 0 },
   { label: 'Last 7 days', value: 7 },
   { label: 'Last 14 days', value: 14 },
   { label: 'Last 30 days', value: 30 },
+  { label: 'Last 90 days', value: 90 },
+  { label: 'Last 365 days', value: 365 },
 ]
 
 // ---------------------------------------------------------------------------
@@ -366,7 +369,7 @@ const DAY_OPTIONS = [
 // ---------------------------------------------------------------------------
 
 export function ReportsPage() {
-  const [days, setDays] = useState<number>(7)
+  const [days, setDays] = useState<number>(0)
   const [marketplaceId, setMarketplaceId] = useState<string | ''>('')
 
   const { data: marketplaces = [] } = useMarketplaces()
@@ -549,7 +552,7 @@ export function ReportsPage() {
                   .map(([category, count]) => (
                     <BarRow
                       key={category}
-                      label={category}
+                      label={getCategoryLabel(category)}
                       value={count}
                       max={categoryMax}
                       colorClass="bg-sky-400 dark:bg-sky-500"

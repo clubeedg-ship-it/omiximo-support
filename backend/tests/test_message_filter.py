@@ -130,10 +130,10 @@ class TestRejectsEmptyMessages:
 
 
 class TestRejectsSenderTypeShop:
-    """Messages from the shop/seller are rejected via sender type check."""
+    """Shop-only threads (no customer/operator message) are rejected as noise."""
 
     def test_rejects_m11_shop_user(self, message_filter: MessageFilter) -> None:
-        """M11 format: from.type = SHOP_USER."""
+        """M11 format: a thread with only a SHOP_USER message is noise."""
         raw_thread = {
             "messages": [
                 {"from": {"type": "SHOP_USER"}, "body": "We shipped your order."}
@@ -143,10 +143,10 @@ class TestRejectsSenderTypeShop:
             raw_thread, "We shipped your order."
         )
         assert should_process is False
-        assert "sender_is_shop" in reason
+        assert "shop_only_thread" in reason
 
     def test_rejects_legacy_author_type_shop(self, message_filter: MessageFilter) -> None:
-        """Legacy format: author_type = shop."""
+        """Legacy format: author_type = shop, no customer message."""
         raw_thread = {
             "messages": [
                 {"author_type": "shop", "body": "Your package is on the way."}
@@ -156,7 +156,7 @@ class TestRejectsSenderTypeShop:
             raw_thread, "Your package is on the way."
         )
         assert should_process is False
-        assert "sender_is_shop" in reason
+        assert "shop_only_thread" in reason
 
     def test_rejects_legacy_author_type_seller(self, message_filter: MessageFilter) -> None:
         raw_thread = {
@@ -267,8 +267,7 @@ class TestReturnsRejectionReason:
         }
         _, reason = message_filter.should_process(raw_thread, "Hello")
         assert reason is not None
-        assert "sender_is_shop" in reason
-        assert "SHOP_USER" in reason
+        assert "shop_only_thread" in reason
 
     def test_empty_reason_is_descriptive(self, message_filter: MessageFilter) -> None:
         raw_thread: dict = {"messages": []}
@@ -294,8 +293,8 @@ class TestEdgeCases:
         assert should_process is True
         assert reason is None
 
-    def test_multiple_messages_only_checks_last(self, message_filter: MessageFilter) -> None:
-        """Only the last message's sender type matters."""
+    def test_accepts_thread_with_any_customer_message(self, message_filter: MessageFilter) -> None:
+        """A thread is kept if any message is from the customer, regardless of order."""
         raw_thread = {
             "messages": [
                 {"from": {"type": "SHOP_USER"}, "body": "We replied earlier."},
@@ -308,18 +307,33 @@ class TestEdgeCases:
         assert should_process is True
         assert reason is None
 
-    def test_shop_user_last_rejects(self, message_filter: MessageFilter) -> None:
-        """If the last message is from shop, reject even if earlier messages are from customer."""
+    def test_keeps_thread_we_replied_to_last(self, message_filter: MessageFilter) -> None:
+        """A real conversation is kept even when WE sent the last message — so
+        handled/awaiting-customer threads stay visible in the inbox."""
         raw_thread = {
             "messages": [
-                {"from": {"type": "CUSTOMER"}, "body": "Where is my order?"},
+                {"from": {"type": "CUSTOMER_USER"}, "body": "Where is my order?"},
                 {"from": {"type": "SHOP_USER"}, "body": "It was shipped yesterday."},
             ]
         }
         should_process, reason = message_filter.should_process(
-            raw_thread, "It was shipped yesterday."
+            raw_thread, "Where is my order?"
         )
-        assert should_process is False
+        assert should_process is True
+        assert reason is None
+
+    def test_keeps_operator_forwarded_thread(self, message_filter: MessageFilter) -> None:
+        """Operator-forwarded complaints (no direct customer message) are kept."""
+        raw_thread = {
+            "messages": [
+                {"from": {"type": "OPERATOR_USER"}, "body": "Customer reports a fault."},
+            ]
+        }
+        should_process, reason = message_filter.should_process(
+            raw_thread, "Customer reports a fault."
+        )
+        assert should_process is True
+        assert reason is None
 
     def test_message_with_only_html_tags_but_no_system_pattern(
         self, message_filter: MessageFilter
@@ -331,8 +345,8 @@ class TestEdgeCases:
         assert should_process is True
         assert reason is None
 
-    def test_priority_order_sender_before_pattern(self, message_filter: MessageFilter) -> None:
-        """Sender type check fires before outbound pattern check."""
+    def test_priority_order_conversation_before_pattern(self, message_filter: MessageFilter) -> None:
+        """Shop-only conversation check fires before the outbound pattern check."""
         raw_thread = {
             "messages": [
                 {
@@ -345,6 +359,6 @@ class TestEdgeCases:
             raw_thread,
             "Wir freuen uns sehr, dass Sie bei Omiximo eingekauft haben.",
         )
-        # Should be rejected by sender check first (rule 1), not pattern (rule 2)
+        # Rejected by the conversation check (rule 1), before the pattern check.
         assert reason is not None
-        assert "sender_is_shop" in reason
+        assert "shop_only_thread" in reason

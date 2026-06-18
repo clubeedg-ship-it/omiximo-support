@@ -29,12 +29,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.marketplace_account import MarketplaceAccount
-from app.models.support_thread import SupportThread, ThreadStatus
+from app.models.support_thread import ReplyState, SupportThread, ThreadStatus
 from app.models.thread_message import MessageAuthorType, MessageDirection, ThreadMessage
 from app.services.audit import write_audit_log
 from app.services.message_filter import MessageFilter
 from app.services.mirakl_client import MiraklClient, MiraklConnectClient
-from app.services.thread_reopen import append_customer_message
+from app.services.thread_reopen import reopen_if_terminal
 
 logger = logging.getLogger(__name__)
 
@@ -303,20 +303,8 @@ class ThreadCollector:
         )
         existing = (await db.execute(stmt)).scalar_one_or_none()
         if existing is not None:
-            # Thread already exists — check for new messages (follow-ups)
-            messages: list[dict[str, Any]] = raw.get("messages", [])
-            latest_customer_msg = _extract_customer_message(messages)
-            if (
-                latest_customer_msg
-                and latest_customer_msg != existing.customer_message
-            ):
-                await append_customer_message(db, existing, latest_customer_msg)
-                await db.commit()
-                logger.info(
-                    "Appended follow-up message to thread %s (mirakl_thread_id=%s)",
-                    existing.id,
-                    mirakl_thread_id,
-                )
+            # Thread already exists — sync any messages we haven't stored yet.
+            await self._sync_thread_messages(db, existing, raw)
             return False
 
         # Extract the latest customer message body
@@ -336,24 +324,13 @@ class ThreadCollector:
             raw, customer_message
         )
         if not should_process:
-            logger.info(
+            # Noise threads (invoice/notification emails) are re-evaluated on
+            # every poll. We deliberately do NOT write an audit row here —
+            # doing so accumulated tens of millions of rows. A debug log is
+            # enough for diagnostics.
+            logger.debug(
                 "Filtered thread %s: %s", mirakl_thread_id, rejection_reason
             )
-            await write_audit_log(
-                db,
-                action="message_filtered",
-                actor="system",
-                thread_id=None,
-                detail={
-                    "mirakl_thread_id": mirakl_thread_id,
-                    "mirakl_order_id": mirakl_order_id,
-                    "account_id": str(account.id),
-                    "marketplace": account.marketplace,
-                    "reason": rejection_reason,
-                    "mode": mode,
-                },
-            )
-            await db.commit()
             return False
 
         if not customer_message:
@@ -377,6 +354,33 @@ class ThreadCollector:
         # SLA deadline is relative to the original thread date
         response_deadline = thread_created_at + timedelta(hours=account.sla_hours)
 
+        # Build the full conversation history from the Mirakl payload.
+        thread_messages = _build_thread_messages(
+            messages, default_dt=thread_created_at
+        )
+        if not thread_messages:
+            # No structured messages (e.g. body came from the subject fallback);
+            # store the single customer message so the thread is never empty.
+            thread_messages = [
+                ThreadMessage(
+                    id=uuid.uuid4(),
+                    direction=MessageDirection.INBOUND.value,
+                    author_type=MessageAuthorType.CUSTOMER.value,
+                    body=customer_message,
+                    sequence_number=1,
+                    created_at=thread_created_at,
+                )
+            ]
+
+        last_customer_dt = next(
+            (
+                m.created_at
+                for m in reversed(thread_messages)
+                if m.author_type == MessageAuthorType.CUSTOMER.value
+            ),
+            thread_created_at,
+        )
+
         thread = SupportThread(
             id=uuid.uuid4(),
             mirakl_thread_id=mirakl_thread_id,
@@ -385,24 +389,19 @@ class ThreadCollector:
             customer_message=customer_message,
             operator_required=operator_required,
             status=ThreadStatus.PENDING_REVIEW,
+            reply_state=_derive_reply_state(raw),
             response_deadline=response_deadline,
-            message_count=1,
-            last_customer_message_at=thread_created_at,
+            message_count=len(thread_messages),
+            last_customer_message_at=last_customer_dt,
+            last_activity_at=_parse_last_activity(raw) or thread_created_at,
             created_at=thread_created_at,
         )
         db.add(thread)
         await db.flush()
 
-        # Create the initial ThreadMessage for the customer's first message
-        initial_msg = ThreadMessage(
-            id=uuid.uuid4(),
-            thread_id=thread.id,
-            direction=MessageDirection.INBOUND.value,
-            author_type=MessageAuthorType.CUSTOMER.value,
-            body=customer_message,
-            sequence_number=1,
-        )
-        db.add(initial_msg)
+        for msg in thread_messages:
+            msg.thread_id = thread.id
+            db.add(msg)
         await db.flush()
 
         await write_audit_log(
@@ -422,6 +421,92 @@ class ThreadCollector:
         await db.commit()
         return True
 
+    async def _sync_thread_messages(
+        self,
+        db: AsyncSession,
+        thread: SupportThread,
+        raw: dict[str, Any],
+    ) -> None:
+        """Idempotently store any Mirakl messages not yet persisted.
+
+        Inserts every message whose ``mirakl_message_id`` is not already stored
+        (covers customer follow-ups, operator notes, and replies sent outside
+        this app). When the newest stored message is an inbound customer
+        message, the denormalized ``customer_message`` is refreshed and a
+        terminal thread is re-opened so it re-enters the pipeline.
+        """
+        messages: list[dict[str, Any]] = raw.get("messages", [])
+        if not messages:
+            return
+
+        new_state = _derive_reply_state(raw)
+        state_changed = new_state != thread.reply_state
+
+        new_activity = _parse_last_activity(raw)
+        activity_changed = (
+            new_activity is not None and new_activity != thread.last_activity_at
+        )
+
+        existing_ids = {
+            mid
+            for mid in (
+                await db.execute(
+                    select(ThreadMessage.mirakl_message_id).where(
+                        ThreadMessage.thread_id == thread.id
+                    )
+                )
+            ).scalars().all()
+            if mid
+        }
+
+        fallback_dt = thread.last_customer_message_at or thread.created_at or datetime.now(UTC)
+        new_messages = _build_thread_messages(
+            messages,
+            default_dt=fallback_dt,
+            start_seq=thread.message_count,
+            skip_ids=existing_ids,
+        )
+
+        # Nothing new to persist and neither state nor activity changed.
+        if not new_messages and not state_changed and not activity_changed:
+            return
+
+        if state_changed:
+            thread.reply_state = new_state
+        if activity_changed:
+            thread.last_activity_at = new_activity
+
+        if new_messages:
+            for msg in new_messages:
+                msg.thread_id = thread.id
+                db.add(msg)
+            thread.message_count += len(new_messages)
+
+            latest_customer = next(
+                (
+                    m
+                    for m in reversed(new_messages)
+                    if m.author_type == MessageAuthorType.CUSTOMER.value
+                ),
+                None,
+            )
+            if latest_customer is not None:
+                thread.customer_message = latest_customer.body
+                thread.last_customer_message_at = latest_customer.created_at
+                await reopen_if_terminal(
+                    db, thread, new_message_length=len(latest_customer.body)
+                )
+
+        thread.updated_at = datetime.now(UTC)
+        await db.commit()
+        logger.info(
+            "Synced thread %s (mirakl_thread_id=%s): +%d message(s), reply_state=%s",
+            thread.id,
+            thread.mirakl_thread_id,
+            len(new_messages),
+            thread.reply_state,
+        )
+
     @staticmethod
     async def _fetch_active_accounts(
         db: AsyncSession,
@@ -433,37 +518,186 @@ class ThreadCollector:
         return list(result.scalars().all())
 
 
-def _extract_customer_message(messages: list[dict[str, Any]]) -> str:
-    """Extract the most recent customer-authored message body from the thread.
+def _get_body(msg: dict[str, Any]) -> str:
+    """Return the first non-empty body/content value from a message dict."""
+    return msg.get("body", "") or msg.get("content", "") or ""
 
-    M11 format: each message has from.type = CUSTOMER | SHOP_USER | OPERATOR
-    Legacy format: from_operator (bool), author_type (str)
 
-    The body text is checked in order of preference:
-      1. ``body``    — standard Mirakl M11 field
-      2. ``content`` — alternative field name used by some Connect responses
+def _msg_from_type(msg: dict[str, Any]) -> str:
+    """Return the uppercase ``from.type`` of a message, or empty string."""
+    frm = msg.get("from")
+    if isinstance(frm, dict):
+        return str(frm.get("type") or "").upper()
+    return ""
+
+
+def _msg_author_name(msg: dict[str, Any]) -> str | None:
+    """Return the sender display name of a message, if present."""
+    frm = msg.get("from")
+    if isinstance(frm, dict):
+        return frm.get("display_name") or None
+    return None
+
+
+def _is_customer_message(msg: dict[str, Any]) -> bool:
+    """Whether a message was authored by the customer.
+
+    Mirakl M11 uses ``from.type`` of CUSTOMER_USER / SHOP_USER / OPERATOR_USER.
+    The legacy fields (``from_operator``, ``author_type``) are honoured as a
+    fallback when ``from.type`` is absent.
     """
-    customer_msgs = [
-        m for m in messages
-        if (
-            m.get("from", {}).get("type") == "CUSTOMER"
-            or (
-                not m.get("from_operator", False)
-                and m.get("author_type", "buyer") in ("buyer", "customer", "")
-                and m.get("from", {}).get("type", "CUSTOMER") not in ("SHOP_USER", "OPERATOR")
-            )
-        )
-    ]
+    ftype = _msg_from_type(msg)
+    if ftype in ("CUSTOMER_USER", "CUSTOMER"):
+        return True
+    if ftype in ("SHOP_USER", "SHOP", "OPERATOR_USER", "OPERATOR"):
+        return False
+    return (
+        not msg.get("from_operator", False)
+        and msg.get("author_type", "buyer") in ("buyer", "customer", "")
+    )
 
-    def _get_body(msg: dict[str, Any]) -> str:
-        """Return the first non-empty body/content value from a message dict."""
-        return msg.get("body", "") or msg.get("content", "") or ""
 
+def _classify_message(msg: dict[str, Any]) -> tuple[str, str]:
+    """Map a Mirakl message to ``(direction, author_type)`` enum values."""
+    ftype = _msg_from_type(msg)
+    if ftype in ("SHOP_USER", "SHOP"):
+        return MessageDirection.OUTBOUND.value, MessageAuthorType.SHOP_USER.value
+    if ftype in ("OPERATOR_USER", "OPERATOR"):
+        return MessageDirection.INBOUND.value, MessageAuthorType.OPERATOR.value
+    if ftype in ("CUSTOMER_USER", "CUSTOMER"):
+        return MessageDirection.INBOUND.value, MessageAuthorType.CUSTOMER.value
+    # Legacy payloads omit ``from.type`` entirely — fall back to the
+    # customer/operator heuristic. An explicit but unrecognised type is SYSTEM.
+    if not ftype and _is_customer_message(msg):
+        return MessageDirection.INBOUND.value, MessageAuthorType.CUSTOMER.value
+    return MessageDirection.INBOUND.value, MessageAuthorType.SYSTEM.value
+
+
+def _parse_msg_date(msg: dict[str, Any]) -> datetime | None:
+    """Parse a single message's own timestamp."""
+    for key in ("date_created", "date", "created_date"):
+        val = msg.get(key)
+        if val:
+            try:
+                return datetime.fromisoformat(str(val).replace("Z", "+00:00"))
+            except (ValueError, AttributeError):
+                continue
+    return None
+
+
+def _sorted_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return messages ordered chronologically (undated entries keep order)."""
+    epoch = datetime.min.replace(tzinfo=UTC)
+    return sorted(
+        messages,
+        key=lambda m: (_parse_msg_date(m) is None, _parse_msg_date(m) or epoch),
+    )
+
+
+def _extract_customer_message(messages: list[dict[str, Any]]) -> str:
+    """Extract the most recent *incoming* message body (the open ask).
+
+    Prefers the latest customer message; falls back to the latest non-shop
+    (e.g. operator-forwarded) message; finally the last message. This keeps
+    ``customer_message`` meaningful even on threads where WE replied last.
+    """
+    ordered = _sorted_messages(messages)
+    customer_msgs = [m for m in ordered if _is_customer_message(m)]
     if customer_msgs:
         return _get_body(customer_msgs[-1])
-    if messages:
-        return _get_body(messages[-1])
+    inbound = [m for m in ordered if _msg_from_type(m) not in ("SHOP_USER", "SHOP")]
+    if inbound:
+        return _get_body(inbound[-1])
+    if ordered:
+        return _get_body(ordered[-1])
     return ""
+
+
+def _derive_reply_state(raw: dict[str, Any]) -> str:
+    """Derive the conversation state from a Mirakl thread payload.
+
+    Uses ``metadata.shop_reply_needed_since`` (authoritative "customer is
+    waiting") and ``metadata.last_sender``; falls back to the last message's
+    sender when metadata is absent (legacy payloads).
+    """
+    meta = raw.get("metadata") or {}
+    if meta.get("shop_reply_needed_since"):
+        return ReplyState.NEEDS_REPLY.value
+
+    last_sender = str((meta.get("last_sender") or {}).get("type") or "").upper()
+    if not last_sender:
+        ordered = _sorted_messages(raw.get("messages", []))
+        last_sender = _msg_from_type(ordered[-1]) if ordered else ""
+
+    if last_sender in ("SHOP_USER", "SHOP"):
+        return ReplyState.AWAITING_CUSTOMER.value
+    if meta:
+        # Mirakl had metadata and did not flag a reply as needed → settled.
+        return ReplyState.RESOLVED.value
+    # No metadata and a non-shop sender spoke last: assume the customer awaits us.
+    return ReplyState.NEEDS_REPLY.value
+
+
+def _parse_last_activity(raw: dict[str, Any]) -> datetime | None:
+    """Timestamp of the most recent message in the conversation.
+
+    Prefers Mirakl's ``metadata.last_message_date``; falls back to the latest
+    message's own date, then the thread date.
+    """
+    meta = raw.get("metadata") or {}
+    val = meta.get("last_message_date")
+    if val:
+        try:
+            return datetime.fromisoformat(str(val).replace("Z", "+00:00"))
+        except (ValueError, AttributeError):
+            pass
+    ordered = _sorted_messages(raw.get("messages", []))
+    if ordered:
+        last = _parse_msg_date(ordered[-1])
+        if last:
+            return last
+    return _parse_mirakl_date(raw)
+
+
+def _build_thread_messages(
+    messages: list[dict[str, Any]],
+    *,
+    default_dt: datetime,
+    start_seq: int = 0,
+    skip_ids: set[str] | None = None,
+) -> list[ThreadMessage]:
+    """Build ``ThreadMessage`` rows for every persistable Mirakl message.
+
+    Messages are ordered chronologically and numbered from ``start_seq + 1``.
+    Empty-bodied messages are skipped; messages whose ``mirakl_message_id`` is
+    in ``skip_ids`` are skipped (idempotent sync). ``thread_id`` is left unset
+    so the caller can assign it after the thread is flushed.
+    """
+    skip_ids = skip_ids or set()
+    out: list[ThreadMessage] = []
+    seq = start_seq
+    for msg in _sorted_messages(messages):
+        mid = str(msg.get("id") or "") or None
+        if mid is not None and mid in skip_ids:
+            continue
+        body = _get_body(msg)
+        if not body:
+            continue
+        direction, author_type = _classify_message(msg)
+        seq += 1
+        out.append(
+            ThreadMessage(
+                id=uuid.uuid4(),
+                direction=direction,
+                author_type=author_type,
+                author_name=_msg_author_name(msg),
+                mirakl_message_id=mid,
+                body=body,
+                sequence_number=seq,
+                created_at=_parse_msg_date(msg) or default_dt,
+            )
+        )
+    return out
 
 
 def _parse_mirakl_date(raw: dict[str, Any]) -> datetime | None:

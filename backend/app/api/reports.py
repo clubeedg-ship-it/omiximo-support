@@ -114,16 +114,17 @@ async def get_summary_report(
         description="Restrict to a single marketplace account",
     ),
     days: int = Query(
-        default=7,
-        ge=1,
-        le=365,
-        description="Lookback window in days (default 7)",
+        default=0,
+        ge=0,
+        le=3650,
+        description="Lookback window in days. 0 means all time (default 0)",
     ),
 ) -> SummaryReport:
     """Return aggregated metrics for threads created in the last *days* days."""
-    since = datetime.now(UTC) - timedelta(days=days)
-
-    base_filter = [SupportThread.created_at >= since]
+    base_filter: list = []
+    if days > 0:
+        since = datetime.now(UTC) - timedelta(days=days)
+        base_filter.append(SupportThread.created_at >= since)
     if marketplace_account_id is not None:
         base_filter.append(
             SupportThread.marketplace_account_id == marketplace_account_id
@@ -132,7 +133,7 @@ async def get_summary_report(
     # ------------------------------------------------------------------ #
     # Fetch all matching threads                                           #
     # ------------------------------------------------------------------ #
-    stmt = select(SupportThread).where(*base_filter)
+    stmt = select(SupportThread).where(*base_filter) if base_filter else select(SupportThread)
     result = await db.execute(stmt)
     threads = list(result.scalars().all())
 
@@ -252,10 +253,10 @@ async def get_timeline_report(
         description="Restrict to a single marketplace account",
     ),
     days: int = Query(
-        default=30,
-        ge=1,
-        le=365,
-        description="Lookback window in days (default 30)",
+        default=0,
+        ge=0,
+        le=3650,
+        description="Lookback window in days. 0 means all time (default 0)",
     ),
     granularity: str = Query(
         default="day",
@@ -264,17 +265,29 @@ async def get_timeline_report(
     ),
 ) -> TimelineReport:
     """Return thread counts bucketed by *granularity* over the last *days* days."""
-    since = datetime.now(UTC) - timedelta(days=days)
+    now = datetime.now(UTC)
 
-    base_filter = [SupportThread.created_at >= since]
+    base_filter: list = []
+    if days > 0:
+        since = datetime.now(UTC) - timedelta(days=days)
+        base_filter.append(SupportThread.created_at >= since)
     if marketplace_account_id is not None:
         base_filter.append(
             SupportThread.marketplace_account_id == marketplace_account_id
         )
 
-    stmt = select(SupportThread).where(*base_filter)
+    stmt = select(SupportThread).where(*base_filter) if base_filter else select(SupportThread)
     result = await db.execute(stmt)
     threads = list(result.scalars().all())
+
+    # For all-time, derive start from earliest thread
+    if days == 0:
+        if threads:
+            since = min(_ensure_utc(t.created_at) for t in threads)
+        else:
+            since = now - timedelta(days=365)
+    else:
+        since = now - timedelta(days=days)
 
     # ------------------------------------------------------------------ #
     # Build buckets                                                        #
@@ -283,7 +296,6 @@ async def get_timeline_report(
 
     # Pre-populate all expected buckets with zeros so the timeline is
     # continuous even for periods with no activity.
-    now = datetime.now(UTC)
     current = since
     while current <= now:
         key = _bucket_key(current, granularity)

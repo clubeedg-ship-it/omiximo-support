@@ -74,8 +74,11 @@ export async function fetchThreads(
   const qs = buildQueryString({
     ...(filters.risk_level ? { risk_level: filters.risk_level } : {}),
     ...(filters.status ? { status: filters.status } : {}),
+    ...(filters.reply_state ? { reply_state: filters.reply_state } : {}),
     ...(filters.marketplace_account_id ? { marketplace_account_id: filters.marketplace_account_id } : {}),
     ...(filters.search ? { search: filters.search } : {}),
+    ...(filters.sort_by ? { sort_by: filters.sort_by } : {}),
+    ...(filters.sort_order ? { sort_order: filters.sort_order } : {}),
     page,
     page_size: pageSize,
   })
@@ -139,7 +142,7 @@ export async function fetchAlerts(): Promise<AlertsResponse> {
 export async function fetchReportSummary(params: ReportParams = {}): Promise<ReportSummary> {
   const qs = buildQueryString({
     ...(params.marketplace_account_id ? { marketplace_account_id: params.marketplace_account_id } : {}),
-    ...(params.days ? { days: params.days } : {}),
+    ...(params.days !== undefined ? { days: params.days } : {}),
   })
   return request<ReportSummary>(`/api/v1/reports/summary${qs}`)
 }
@@ -147,7 +150,7 @@ export async function fetchReportSummary(params: ReportParams = {}): Promise<Rep
 export async function fetchReportTimeline(params: ReportParams = {}): Promise<ReportTimeline> {
   const qs = buildQueryString({
     ...(params.marketplace_account_id ? { marketplace_account_id: params.marketplace_account_id } : {}),
-    ...(params.days ? { days: params.days } : {}),
+    ...(params.days !== undefined ? { days: params.days } : {}),
   })
   return request<ReportTimeline>(`/api/v1/reports/timeline${qs}`)
 }
