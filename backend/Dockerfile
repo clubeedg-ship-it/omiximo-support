@@ -39,9 +39,12 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH="/opt/venv/bin:$PATH"
 
-# libpq5 for asyncpg/psql at runtime; curl for the container HEALTHCHECK.
+# libpq5 for asyncpg at runtime; postgresql-client gives pg_isready + psql
+# (used by the wait-for-db init container and for debugging); curl for the
+# container HEALTHCHECK.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
+    postgresql-client \
     curl \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 --create-home appuser
