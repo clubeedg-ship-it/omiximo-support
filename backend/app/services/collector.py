@@ -419,6 +419,7 @@ class ThreadCollector:
             },
         )
         await db.commit()
+        await _notify_new_thread(thread, account, customer_message)
         return True
 
     async def _sync_thread_messages(
@@ -516,6 +517,22 @@ class ThreadCollector:
         )
         result = await db.execute(stmt)
         return list(result.scalars().all())
+
+
+async def _notify_new_thread(
+    thread: SupportThread,
+    account: MarketplaceAccount,
+    customer_message: str,
+) -> None:
+    """Post a new-thread line to the Telegram activity channel (best-effort)."""
+    from app.services.telegram import TelegramService
+    from app.services.text_clean import strip_html
+
+    preview = strip_html(customer_message or "").strip().replace("\n", " ")[:200]
+    await TelegramService().send_activity(
+        f"🆕 <b>New thread</b> — order {thread.mirakl_order_id} "
+        f"({account.marketplace})\n{preview}"
+    )
 
 
 def _get_body(msg: dict[str, Any]) -> str:

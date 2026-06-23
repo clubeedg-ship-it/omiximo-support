@@ -192,6 +192,33 @@ class DraftPipeline:
             return
 
         # ---------------------------------------------------------------- #
+        # Step 4b: Autonomous agent path (when AGENT_ENABLED)               #
+        # The tool-calling agent gathers real order data and proposes a     #
+        # reply gated behind Telegram Approve/Deny. The thread stays         #
+        # PENDING_REVIEW until a human approves the proposed action.         #
+        # ---------------------------------------------------------------- #
+        from app.config import settings as _settings
+
+        if _settings.AGENT_ENABLED:
+            from app.services.agent.runner import AgentRunner
+
+            proposed = await AgentRunner().run_for_thread(db, thread=thread, account=account)
+            await write_audit_log(
+                db,
+                action="agent_proposed" if proposed else "agent_no_action",
+                actor="system",
+                thread_id=thread.id,
+                detail={
+                    "action_type": proposed.action_type if proposed else None,
+                    "action_id": str(proposed.id) if proposed else None,
+                },
+            )
+            thread.status = ThreadStatus.PENDING_REVIEW
+            thread.updated_at = datetime.now(UTC)
+            await db.commit()
+            return
+
+        # ---------------------------------------------------------------- #
         # Step 5: Generate draft                                            #
         # ---------------------------------------------------------------- #
         template_context = _build_template_context(thread, order_context, account)
