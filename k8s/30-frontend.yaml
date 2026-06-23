@@ -1,0 +1,73 @@
+# Omiximo Support frontend: static SPA served by nginx.
+#
+# Unlike the API, this is stateless (no in-process schedulers), so it scales
+# horizontally. Two replicas give basic HA and let RollingUpdate deploy with no
+# downtime.
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: omiximo-support
+  labels:
+    app: frontend
+spec:
+  type: NodePort
+  selector:
+    app: frontend
+  ports:
+    - name: http
+      port: 5173
+      targetPort: 5173
+      # Pinned: host nginx proxies support.abbamarkt.nl -> 127.0.0.1:30173.
+      nodePort: 30173
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: omiximo-support
+  labels:
+    app: frontend
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+        - name: frontend
+          image: omiximo-frontend:prod
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 5173
+          resources:
+            requests:
+              cpu: "10m"
+              memory: "32Mi"
+            limits:
+              cpu: "250m"
+              memory: "128Mi"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 5173
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 5173
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3

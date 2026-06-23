@@ -1,0 +1,120 @@
+# PostgreSQL 16 as a StatefulSet backed by a real PersistentVolumeClaim.
+#
+# This replaces the previous setup, where `db` was a Deployment whose data lived
+# on a hostPath pointing into a leftover Docker volume
+# (/var/lib/docker/volumes/omiximo-support_postgres_data/_data). That was
+# unmanaged, node-pinned, and a single mistake away from data loss. A
+# StatefulSet + volumeClaimTemplate gives stable storage owned by Kubernetes.
+#
+# Credentials come from the `omiximo-db` Secret (see secret.example.yaml) so no
+# password is committed to git.
+apiVersion: v1
+kind: Service
+metadata:
+  name: db
+  namespace: omiximo-support
+  labels:
+    app: db
+spec:
+  # Headless service: stable DNS for the StatefulSet pod. The hostname `db`
+  # keeps matching the api's DATABASE_URL (postgresql+asyncpg://...@db:5432/...).
+  clusterIP: None
+  selector:
+    app: db
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: db
+  namespace: omiximo-support
+  labels:
+    app: db
+spec:
+  serviceName: db
+  replicas: 1
+  selector:
+    matchLabels:
+      app: db
+  template:
+    metadata:
+      labels:
+        app: db
+    spec:
+      securityContext:
+        # postgres:16 runs as uid 999; let it own the mounted volume.
+        fsGroup: 999
+      containers:
+        - name: postgres
+          image: postgres:16
+          args:
+            # Keep planner stats fresh and reclaim insert-heavy tables (e.g.
+            # audit_log) promptly. The previous DB had effectively never been
+            # autovacuumed, which let one table balloon to 18GB.
+            - "-c"
+            - "autovacuum=on"
+            - "-c"
+            - "autovacuum_naptime=30s"
+            - "-c"
+            - "autovacuum_vacuum_insert_threshold=1000"
+            - "-c"
+            - "autovacuum_vacuum_insert_scale_factor=0.02"
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: omiximo-db
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: omiximo-db
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: omiximo-db
+                  key: POSTGRES_DB
+            # Data in a subdirectory so lost+found on some volumes can't clash
+            # with initdb.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+  volumeClaimTemplates:
+    - metadata:
+        name: pgdata
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: local-path
+        resources:
+          requests:
+            storage: 8Gi

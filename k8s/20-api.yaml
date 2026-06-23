@@ -1,0 +1,107 @@
+# Omiximo Support API (FastAPI).
+#
+# replicas: 1 + strategy: Recreate is DELIBERATE and load-bearing.
+# app.main:app starts in-process background loops (mirakl_poller,
+# auto_send_executor, sla_monitor) in its lifespan. Two pods would poll Mirakl
+# twice and could send a customer reply twice. Recreate guarantees the old pod
+# is gone before the new one starts, so exactly one scheduler exists at all
+# times. Do NOT bump replicas or switch to RollingUpdate until the schedulers
+# are extracted into their own single-replica worker Deployment.
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: omiximo-support
+  labels:
+    app: api
+spec:
+  type: NodePort
+  selector:
+    app: api
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+      # Pinned: host nginx proxies api-support.abbamarkt.nl -> 127.0.0.1:30800.
+      nodePort: 30800
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: omiximo-support
+  labels:
+    app: api
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      initContainers:
+        # Block until Postgres accepts connections.
+        - name: wait-for-db
+          image: omiximo-api:prod
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - secretRef:
+                name: omiximo-env
+          command:
+            - sh
+            - -c
+            - "until pg_isready -h db -U omiximo; do echo waiting for db; sleep 2; done"
+        # Apply database migrations before the app starts. Idempotent.
+        - name: migrate
+          image: omiximo-api:prod
+          imagePullPolicy: IfNotPresent
+          workingDir: /app
+          envFrom:
+            - secretRef:
+                name: omiximo-env
+          command: ["alembic", "upgrade", "head"]
+      containers:
+        - name: api
+          image: omiximo-api:prod
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: omiximo-env
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "768Mi"
+          # Startup probe gives the app room to boot (migrations already ran in
+          # an initContainer, but first-request warmup still takes a moment)
+          # before liveness starts policing it.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            periodSeconds: 5
+            failureThreshold: 24   # up to 2 minutes to become healthy
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
