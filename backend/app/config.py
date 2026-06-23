@@ -88,6 +88,31 @@ class Settings(BaseSettings):
     SLA_AUTO_ESCALATE_ENABLED: bool = False
 
     # ------------------------------------------------------------------ #
+    # Telegram activity channel + approval gate                           #
+    # ------------------------------------------------------------------ #
+    # The bot posts new-thread activity + agent tool calls here and sends
+    # Approve/Deny cards for proposed actions. Empty token => Telegram is a
+    # no-op (system runs without it). WEBHOOK_SECRET is the value Telegram
+    # echoes in the X-Telegram-Bot-Api-Secret-Token header on callbacks.
+    TELEGRAM_BOT_TOKEN: str = ""
+    TELEGRAM_CHAT_ID: str = ""
+    TELEGRAM_WEBHOOK_SECRET: str = ""
+
+    # ------------------------------------------------------------------ #
+    # Autonomous support agent                                             #
+    # ------------------------------------------------------------------ #
+    # Master kill-switch. When False, the existing template/smart_draft
+    # path runs unchanged. When True, non-RED threads are handled by the
+    # tool-calling agent whose actions are gated by Telegram approval.
+    AGENT_ENABLED: bool = False
+    # Tool-calling capable model on OpenRouter.
+    AGENT_MODEL: str = "google/gemini-2.5-flash"
+    # Max tool-call iterations per thread before giving up.
+    AGENT_MAX_STEPS: int = 6
+    # Public base URL used to register the Telegram webhook.
+    PUBLIC_BASE_URL: str = "https://api-support.abbamarkt.nl"
+
+    # ------------------------------------------------------------------ #
     # CORS                                                                 #
     # ------------------------------------------------------------------ #
     CORS_ORIGINS: list[str] = [
