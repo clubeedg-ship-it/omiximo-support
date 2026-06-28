@@ -187,6 +187,84 @@ async def test_edit_flow_updates_draft_and_rerenders(unauthenticated_client, db,
 
 
 @pytest.mark.asyncio
+async def test_translate_flow_shows_picker_then_translation(unauthenticated_client, db, proposal, monkeypatch):
+    monkeypatch.setattr(settings, "TELEGRAM_WEBHOOK_SECRET", "")
+    with patch("app.api.telegram.TelegramService") as tg_cls, patch(
+        "app.api.telegram.MessageInsightService"
+    ) as mi_cls:
+        inst = tg_cls.return_value
+        inst.answer_callback = AsyncMock()
+        inst.edit_card = AsyncMock()
+        mi_cls.return_value.translate_to = AsyncMock(return_value="Where is my parcel?")
+
+        # 1. tap 🌐 Translate → language picker
+        r1 = await unauthenticated_client.post(
+            "/api/v1/telegram/webhook",
+            json={"callback_query": {"id": "c1", "data": f"tr:{proposal.id}",
+                                     "from": {"id": 5}, "message": {"chat": {"id": -1}}}},
+        )
+        assert r1.status_code == 200
+        picker = inst.edit_card.call_args.kwargs["reply_markup"]
+        picker_datas = [b["callback_data"] for row in picker["inline_keyboard"] for b in row]
+        assert f"trset:{proposal.id}:en" in picker_datas
+
+        # 2. pick English → translated view
+        r2 = await unauthenticated_client.post(
+            "/api/v1/telegram/webhook",
+            json={"callback_query": {"id": "c2", "data": f"trset:{proposal.id}:en",
+                                     "from": {"id": 5}, "message": {"chat": {"id": -1}}}},
+        )
+        assert r2.status_code == 200
+        last = inst.edit_card.call_args
+        assert "Where is my parcel?" in last.kwargs["text"]
+        translated_datas = [
+            b["callback_data"] for row in last.kwargs["reply_markup"]["inline_keyboard"] for b in row
+        ]
+        assert f"back:{proposal.id}" in translated_datas
+        mi_cls.return_value.translate_to.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_pending_command_lists_threads(unauthenticated_client, proposal, monkeypatch):
+    monkeypatch.setattr(settings, "TELEGRAM_WEBHOOK_SECRET", "")
+    sent: list[str] = []
+    with patch("app.api.telegram.TelegramService") as tg_cls:
+        inst = tg_cls.return_value
+        inst.send_activity = AsyncMock(side_effect=lambda t: sent.append(t))
+        resp = await unauthenticated_client.post("/api/v1/telegram/webhook", json=_command("/pending"))
+    assert resp.status_code == 200
+    assert sent and "Wachtend op review" in sent[0]
+    assert "O1" in sent[0]  # the proposal fixture's order
+
+
+@pytest.mark.asyncio
+async def test_thread_command_reposts_card(unauthenticated_client, proposal, monkeypatch):
+    monkeypatch.setattr(settings, "TELEGRAM_WEBHOOK_SECRET", "")
+    cards: list[str] = []
+    with patch("app.api.telegram.TelegramService") as tg_cls:
+        inst = tg_cls.return_value
+        inst.send_card = AsyncMock(side_effect=lambda text, markup=None: cards.append(text))
+        inst.send_activity = AsyncMock()
+        resp = await unauthenticated_client.post("/api/v1/telegram/webhook", json=_command("/thread O1"))
+    assert resp.status_code == 200
+    assert cards and "O1" in cards[0]
+    assert "Hallo, opgelost." in cards[0]  # the proposed reply re-rendered
+
+
+@pytest.mark.asyncio
+async def test_stats_command_reports_counts(unauthenticated_client, proposal, monkeypatch):
+    monkeypatch.setattr(settings, "TELEGRAM_WEBHOOK_SECRET", "")
+    sent: list[str] = []
+    with patch("app.api.telegram.TelegramService") as tg_cls:
+        inst = tg_cls.return_value
+        inst.send_activity = AsyncMock(side_effect=lambda t: sent.append(t))
+        resp = await unauthenticated_client.post("/api/v1/telegram/webhook", json=_command("/stats"))
+    assert resp.status_code == 200
+    assert sent and "Statistieken" in sent[0]
+    assert "Totaal threads" in sent[0]
+
+
+@pytest.mark.asyncio
 async def test_plain_message_is_ignored(unauthenticated_client, monkeypatch):
     monkeypatch.setattr(settings, "TELEGRAM_WEBHOOK_SECRET", "")
     resp = await unauthenticated_client.post(

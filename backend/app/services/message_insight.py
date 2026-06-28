@@ -92,6 +92,13 @@ Respond with ONLY a JSON object with exactly these keys:
 No prose, no markdown fences, no explanation outside the JSON.
 """
 
+_TRANSLATE_TO_SYSTEM_PROMPT = """\
+You are a professional translation engine for customer-support communications.
+Translate the user's text into the requested target language, preserving meaning,
+all commitments, and a professional, courteous tone. Output ONLY the translation
+— no notes, no quotes, no markdown, no JSON.
+"""
+
 
 @dataclass
 class InsightResult:
@@ -224,6 +231,27 @@ class MessageInsightService:
             logger.warning(
                 "Draft translation failed (non-blocking): %s", exc,
             )
+            return None
+
+    async def translate_to(self, text: str, target_language: str) -> str | None:
+        """Translate arbitrary ``text`` into ``target_language`` (display-only).
+
+        Source-language-agnostic (unlike ``translate_draft``, which assumes an
+        English source) and returns plain text. Never raises — returns ``None``
+        on empty input or any failure, so the caller can treat it as best-effort.
+        """
+        if not (text or "").strip():
+            return None
+        if self._mock_mode:
+            return f"[{target_language}] {text}"
+        try:
+            user_content = f"Target language: {target_language}\n\nText:\n{text}"
+            raw = await self._call_llm(
+                user_content, system_prompt=_TRANSLATE_TO_SYSTEM_PROMPT
+            )
+            return raw.strip()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("translate_to failed (non-blocking): %s", exc)
             return None
 
     # ------------------------------------------------------------------ #

@@ -13,6 +13,7 @@ verified via the ``X-Telegram-Bot-Api-Secret-Token`` header configured at
 
 from __future__ import annotations
 
+import html
 import logging
 import uuid
 from datetime import UTC, datetime
@@ -31,8 +32,12 @@ from app.models.telegram_session import TelegramSession
 from app.models.thread_message import ThreadMessage
 from app.services.agent.cards import build_action_card, toolbar
 from app.services.audit import write_audit_log
+from app.services.message_insight import MessageInsightService
 from app.services.mirakl_client import MiraklClient
 from app.services.telegram import TelegramService
+from app.services.text_clean import strip_html
+
+_LANG_NAMES = {"nl": "Nederlands", "en": "English", "fr": "Français", "de": "Deutsch"}
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +93,12 @@ async def _handle_callback(
         return await _start_edit(db, telegram, callback_id, arg, chat_id)
     if verb == "cancel":
         return await _cancel_edit(db, telegram, callback_id, arg)
+    if verb == "tr":
+        return await _start_translate(db, telegram, callback_id, arg)
+    if verb == "trset":
+        return await _translate(db, telegram, callback_id, arg)
+    if verb == "back":
+        return await _restore(db, telegram, callback_id, arg)
     await telegram.answer_callback(callback_id)
     return {"ok": True}
 
@@ -170,6 +181,71 @@ async def _cancel_edit(
         await db.execute(delete(TelegramSession).where(TelegramSession.action_id == action.id))
         await db.commit()
     await telegram.answer_callback(callback_id, "Geannuleerd")
+    if action is not None and action.telegram_message_id:
+        text, markup = await _render(db, action)
+        await telegram.edit_card(
+            message_id=action.telegram_message_id, text=text, reply_markup=markup
+        )
+    return {"ok": True}
+
+
+async def _start_translate(
+    db: AsyncSession, telegram: TelegramService, callback_id: str, action_id_str: str
+) -> dict[str, bool]:
+    """Show the language picker on a reply card."""
+    action = await _load_proposed(db, action_id_str)
+    if action is None or action.action_type != "send_reply":
+        await telegram.answer_callback(callback_id, "Niet beschikbaar")
+        return {"ok": True}
+    await telegram.answer_callback(callback_id)
+    if action.telegram_message_id:
+        text, _ = await _render(db, action)
+        await telegram.edit_card(
+            message_id=action.telegram_message_id,
+            text=text,
+            reply_markup=toolbar(action.action_type, action.id, "picking_lang"),
+        )
+    return {"ok": True}
+
+
+async def _translate(
+    db: AsyncSession, telegram: TelegramService, callback_id: str, arg: str
+) -> dict[str, bool]:
+    """Translate the proposed reply into the chosen language (display-only)."""
+    action_id_str, _, lang = arg.partition(":")
+    action = await _load_proposed(db, action_id_str)
+    if action is None or action.action_type != "send_reply":
+        await telegram.answer_callback(callback_id, "Niet beschikbaar")
+        return {"ok": True}
+
+    await telegram.answer_callback(callback_id, "Vertalen…")
+    body = (action.payload_json or {}).get("body", "")
+    translated = await MessageInsightService().translate_to(body, lang)
+
+    base, _ = await _render(db, action)
+    if translated:
+        lang_name = _LANG_NAMES.get(lang, lang.upper())
+        block = (
+            f"\n\n🌐 <b>Vertaling — {html.escape(lang_name, quote=False)}</b>\n"
+            f"<blockquote>{html.escape(translated, quote=False)}</blockquote>"
+        )
+    else:
+        block = "\n\n🌐 <i>Vertaling niet beschikbaar</i>"
+    if action.telegram_message_id:
+        await telegram.edit_card(
+            message_id=action.telegram_message_id,
+            text=base + block,
+            reply_markup=toolbar(action.action_type, action.id, "translated"),
+        )
+    return {"ok": True}
+
+
+async def _restore(
+    db: AsyncSession, telegram: TelegramService, callback_id: str, action_id_str: str
+) -> dict[str, bool]:
+    """Return a card to its proposed view (from a picker/translated view)."""
+    action = await _load_proposed(db, action_id_str)
+    await telegram.answer_callback(callback_id)
     if action is not None and action.telegram_message_id:
         text, markup = await _render(db, action)
         await telegram.edit_card(
@@ -276,25 +352,29 @@ async def _handle_command(
     if not is_command:
         return {"ok": True}
 
-    cmd = text.split(maxsplit=1)[0].lstrip("/").split("@", 1)[0].lower()
+    parts = text.split()
+    cmd = parts[0].lstrip("/").split("@", 1)[0].lower()
     handler = _COMMANDS.get(cmd)
     if handler is not None:
-        await handler(db, telegram)
+        await handler(db, telegram, parts[1:])
     return {"ok": True}
 
 
-async def _cmd_help(db: AsyncSession, telegram: TelegramService) -> None:
+async def _cmd_help(db: AsyncSession, telegram: TelegramService, args: list[str]) -> None:
     await telegram.send_activity(
         "🤖 <b>Omiximo Support — commando's</b>\n"
+        "/pending — threads die wachten op review\n"
+        "/thread &lt;order&gt; — open de kaart van een order\n"
         "/status — systeemstatus en schakelaars\n"
+        "/stats — aantallen van vandaag\n"
         "/help — deze hulp\n\n"
         "<b>Op een kaart:</b>\n"
-        "✅ Approve / ❌ Deny — verstuur of weiger het concept\n"
+        "✅ Approve / ❌ Deny · ✏️ Edit · 🌐 Translate\n"
         "⤴️ Escalate / ❌ Dismiss — escaleer naar een mens of negeer"
     )
 
 
-async def _cmd_status(db: AsyncSession, telegram: TelegramService) -> None:
+async def _cmd_status(db: AsyncSession, telegram: TelegramService, args: list[str]) -> None:
     pending = (
         await db.execute(
             select(func.count())
@@ -315,7 +395,115 @@ async def _cmd_status(db: AsyncSession, telegram: TelegramService) -> None:
     )
 
 
-_COMMANDS = {"help": _cmd_help, "status": _cmd_status}
+async def _cmd_pending(db: AsyncSession, telegram: TelegramService, args: list[str]) -> None:
+    rows = (
+        await db.execute(
+            select(SupportThread)
+            .where(SupportThread.status == ThreadStatus.PENDING_REVIEW)
+            .order_by(SupportThread.response_deadline.asc())
+            .limit(10)
+        )
+    ).scalars().all()
+    total = (
+        await db.execute(
+            select(func.count())
+            .select_from(SupportThread)
+            .where(SupportThread.status == ThreadStatus.PENDING_REVIEW)
+        )
+    ).scalar_one()
+
+    if not rows:
+        await telegram.send_activity("📭 Geen threads wachten op review.")
+        return
+
+    lines = [f"📋 <b>Wachtend op review</b> — {total}"]
+    for t in rows:
+        risk = t.risk_level.value if t.risk_level is not None else "—"
+        snippet = html.escape(strip_html(t.customer_message or "")[:60], quote=False)
+        lines.append(
+            f"• <code>{html.escape(str(t.mirakl_order_id), quote=False)}</code> "
+            f"· {risk} {t.category or '—'} — {snippet}"
+        )
+    if total > len(rows):
+        lines.append(f"… en {total - len(rows)} meer — open er een met /thread &lt;order&gt;.")
+    await telegram.send_activity("\n".join(lines))
+
+
+async def _cmd_thread(db: AsyncSession, telegram: TelegramService, args: list[str]) -> None:
+    if not args:
+        await telegram.send_activity("Gebruik: /thread &lt;order_id&gt;")
+        return
+    order_id = args[0]
+    thread = (
+        await db.execute(
+            select(SupportThread)
+            .where(SupportThread.mirakl_order_id == order_id)
+            .order_by(SupportThread.response_deadline.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if thread is None:
+        await telegram.send_activity(
+            f"Geen thread voor order <code>{html.escape(order_id, quote=False)}</code>."
+        )
+        return
+
+    action = (
+        await db.execute(
+            select(AgentAction)
+            .where(
+                AgentAction.thread_id == thread.id,
+                AgentAction.status == ActionStatus.PROPOSED.value,
+            )
+            .order_by(AgentAction.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if action is not None:
+        text, markup = await _render(db, action)
+        await telegram.send_card(text, markup)
+        return
+
+    status_label = getattr(thread.status, "value", thread.status)
+    risk = thread.risk_level.value if thread.risk_level is not None else "—"
+    snippet = html.escape(strip_html(thread.customer_message or "")[:200], quote=False)
+    await telegram.send_activity(
+        f"📦 <b>Order {html.escape(order_id, quote=False)}</b> · {status_label} · {risk}\n"
+        f"Geen openstaand voorstel.\n{snippet}"
+    )
+
+
+async def _cmd_stats(db: AsyncSession, telegram: TelegramService, args: list[str]) -> None:
+    async def _count(*conds) -> int:
+        q = select(func.count()).select_from(SupportThread)
+        for cond in conds:
+            q = q.where(cond)
+        return (await db.execute(q)).scalar_one()
+
+    start_today = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    received_today = await _count(SupportThread.created_at >= start_today)
+    pending = await _count(SupportThread.status == ThreadStatus.PENDING_REVIEW)
+    sent = await _count(SupportThread.status == ThreadStatus.SENT_AUTO)
+    escalated = await _count(SupportThread.status == ThreadStatus.ESCALATED)
+    total = await _count()
+
+    await telegram.send_activity(
+        "📊 <b>Statistieken</b>\n"
+        f"• Vandaag ontvangen: <b>{received_today}</b>\n"
+        f"• Wachtend op review: <b>{pending}</b>\n"
+        f"• Verstuurd: <b>{sent}</b>\n"
+        f"• Geëscaleerd: <b>{escalated}</b>\n"
+        f"• Totaal threads: <b>{total}</b>"
+    )
+
+
+_COMMANDS = {
+    "help": _cmd_help,
+    "status": _cmd_status,
+    "pending": _cmd_pending,
+    "thread": _cmd_thread,
+    "stats": _cmd_stats,
+}
 
 
 async def _execute_action(
