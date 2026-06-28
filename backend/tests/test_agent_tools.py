@@ -58,8 +58,9 @@ async def test_send_reply_creates_proposal_and_requests_approval(db, sample_acco
     datas = _button_datas(tg.cards[0]["reply_markup"])
     assert f"approve:{ctx.proposed_action.id}" in datas
     assert f"edit:{ctx.proposed_action.id}" in datas
-    # facts snapshot persisted for later re-render
-    assert ctx.proposed_action.context_json == {"facts": ctx.facts}
+    # facts snapshot persisted for later re-render; clean reply is not flagged
+    assert ctx.proposed_action.context_json["facts"] == ctx.facts
+    assert ctx.proposed_action.context_json["safety"] == []
 
 
 @pytest.mark.asyncio
@@ -125,6 +126,21 @@ async def test_send_reply_card_includes_full_conversation_when_multi_message(
     assert "3 berichten" in text
     assert "Nog steeds niks ontvangen." in text
     assert "Bedankt voor uw geduld." in text  # proposed reply shown separately
+
+
+@pytest.mark.asyncio
+async def test_send_reply_with_refund_promise_is_safety_flagged(db, sample_account, sample_thread):
+    tg = FakeTelegram()
+    ctx = ToolContext(db=db, thread=sample_thread, account=sample_account, telegram=tg)
+    await execute_tool(ctx, "send_reply", {"body": "Geen zorgen, wij zullen het bedrag terugbetalen."})
+
+    assert ctx.proposed_action.context_json["safety"]  # R1 refund promise detected
+    text = tg.cards[0]["text"]
+    assert "Veiligheidswaarschuwing" in text
+    datas = _button_datas(tg.cards[0]["reply_markup"])
+    assert f"approve:{ctx.proposed_action.id}" not in datas  # Approve withheld
+    assert f"edit:{ctx.proposed_action.id}" in datas
+    assert f"deny:{ctx.proposed_action.id}" in datas
 
 
 @pytest.mark.asyncio

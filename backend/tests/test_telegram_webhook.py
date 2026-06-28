@@ -265,6 +265,21 @@ async def test_stats_command_reports_counts(unauthenticated_client, proposal, mo
 
 
 @pytest.mark.asyncio
+async def test_approve_blocked_when_safety_flagged(unauthenticated_client, db, proposal, monkeypatch):
+    monkeypatch.setattr(settings, "TELEGRAM_WEBHOOK_SECRET", "")
+    proposal.context_json = {"safety": ["R1: refund promise"]}
+    await db.flush()
+    with patch("app.api.telegram.TelegramService") as tg_cls:
+        tg_cls.return_value.answer_callback = AsyncMock()
+        resp = await unauthenticated_client.post(
+            "/api/v1/telegram/webhook", json=_callback(proposal.id, "approve")
+        )
+    assert resp.status_code == 200
+    refreshed = await db.get(AgentAction, proposal.id)
+    assert refreshed.status == ActionStatus.PROPOSED.value  # NOT executed while flagged
+
+
+@pytest.mark.asyncio
 async def test_plain_message_is_ignored(unauthenticated_client, monkeypatch):
     monkeypatch.setattr(settings, "TELEGRAM_WEBHOOK_SECRET", "")
     resp = await unauthenticated_client.post(

@@ -105,3 +105,12 @@ async def test_answer_callback_posts_acknowledgement(monkeypatch):
 async def test_answer_callback_noop_without_token():
     svc = TelegramService(token="", chat_id="")
     assert await svc.answer_callback("x") is None
+
+
+@pytest.mark.asyncio
+async def test_register_webhook_noop_without_token(monkeypatch):
+    from app.config import settings
+    from app.services.telegram import register_webhook
+
+    monkeypatch.setattr(settings, "TELEGRAM_BOT_TOKEN", "")
+    assert await register_webhook() is False

@@ -24,6 +24,42 @@ logger = logging.getLogger(__name__)
 
 _API_BASE = "https://api.telegram.org"
 
+# Update types the operator console needs Telegram to deliver. ``message`` covers
+# slash commands AND the force-reply replies that drive the ✏️ Edit flow; without
+# it those silently never arrive. ``callback_query`` covers all button taps.
+_ALLOWED_UPDATES = ["message", "callback_query"]
+
+
+async def register_webhook() -> bool:
+    """Register the Telegram webhook with the right ``allowed_updates``.
+
+    Idempotent and best-effort — guards against the regression where the webhook
+    is registered for ``callback_query`` only (which silently breaks commands and
+    Edit). Returns True on a successful ``setWebhook``, False otherwise; never
+    raises, so it is safe to call on every startup.
+    """
+    token = settings.TELEGRAM_BOT_TOKEN
+    if not token:
+        return False
+    body: dict[str, Any] = {
+        "url": f"{settings.PUBLIC_BASE_URL.rstrip('/')}/api/v1/telegram/webhook",
+        "allowed_updates": _ALLOWED_UPDATES,
+    }
+    if settings.TELEGRAM_WEBHOOK_SECRET:
+        body["secret_token"] = settings.TELEGRAM_WEBHOOK_SECRET
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(f"{_API_BASE}/bot{token}/setWebhook", json=body)
+        ok = bool(resp.json().get("ok"))
+        if ok:
+            logger.info("Telegram webhook registered (allowed_updates=%s)", _ALLOWED_UPDATES)
+        else:
+            logger.warning("Telegram setWebhook not ok: %s", str(resp.json())[:200])
+        return ok
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Telegram register_webhook failed (non-blocking): %s", exc)
+        return False
+
 
 class TelegramService:
     def __init__(self, token: str | None = None, chat_id: str | None = None) -> None:

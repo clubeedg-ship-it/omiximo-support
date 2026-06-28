@@ -61,11 +61,14 @@ def toolbar(
     state: str = "proposed",
     *,
     languages: list[tuple[str, str]] | None = None,
+    flagged: bool = False,
 ) -> dict[str, Any]:
     """Inline keyboard for a card in a given state.
 
     ``callback_data`` carries the action id (and language code for translation)
-    so the webhook router can dispatch without server-side state.
+    so the webhook router can dispatch without server-side state. ``flagged``
+    (a reply with safety violations) withholds Approve — the operator must Edit
+    it clean or Deny it; they cannot one-tap send dangerous content.
     """
     aid = action_id
     if state == "editing":
@@ -76,15 +79,16 @@ def toolbar(
         rows.append([("🔙 Terug", f"back:{aid}")])
         return _kb(rows)
     if state == "translated":
-        return _kb(
-            [
-                [("✅ Approve", f"approve:{aid}"), ("✏️ Edit", f"edit:{aid}")],
-                [("🔙 Terug", f"back:{aid}")],
-            ]
-        )
+        approve_row = [] if flagged else [("✅ Approve", f"approve:{aid}")]
+        return _kb([approve_row + [("✏️ Edit", f"edit:{aid}")], [("🔙 Terug", f"back:{aid}")]])
     # proposed
     if action_type == "escalate":
         return _kb([[("⤴️ Escalate", f"approve:{aid}"), ("❌ Dismiss", f"deny:{aid}")]])
+    if flagged:
+        # Safety violations: no one-tap Approve — Edit it clean or Deny.
+        return _kb(
+            [[("✏️ Edit", f"edit:{aid}"), ("❌ Deny", f"deny:{aid}")], [("🌐 Translate", f"tr:{aid}")]]
+        )
     return _kb(
         [
             [("✅ Approve", f"approve:{aid}"), ("❌ Deny", f"deny:{aid}")],
@@ -101,13 +105,15 @@ def build_action_card(
     body: str,
     messages: list[Any] | None = None,
     edited_by: str | None = None,
+    safety_violations: list[str] | None = None,
 ) -> str:
     """Render the full Telegram HTML card for a proposed agent action.
 
     ``messages`` is the thread's conversation turns (oldest first). With more
     than one turn the card renders the full threaded history; with one or none
     it falls back to a single customer quote. ``edited_by`` marks a reply an
-    operator has hand-edited.
+    operator has hand-edited. ``safety_violations`` (from ``safety_rules``)
+    render a ⚠️ warning above the reply so the reviewer cannot miss them.
     """
     order = _as_dict(facts.get("get_order"))
     tracking = _as_dict(facts.get("get_tracking"))
@@ -126,9 +132,18 @@ def build_action_card(
     if fact_lines:
         lines += ["", *fact_lines]
 
+    if safety_violations:
+        lines += ["", *_safety_block(safety_violations)]
+
     lines += ["", *_body_block(action_type, body, edited_by)]
 
     return "\n".join(line for line in lines if line is not None)
+
+
+def _safety_block(violations: list[str]) -> list[str]:
+    out = ["⚠️ <b>Veiligheidswaarschuwing</b>"]
+    out.extend(f"• {_esc(v)}" for v in violations[:5])
+    return out
 
 
 # --------------------------------------------------------------------------- #

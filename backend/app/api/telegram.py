@@ -34,6 +34,7 @@ from app.services.agent.cards import build_action_card, toolbar
 from app.services.audit import write_audit_log
 from app.services.message_insight import MessageInsightService
 from app.services.mirakl_client import MiraklClient
+from app.services.safety_rules import SafetyRules
 from app.services.telegram import TelegramService
 from app.services.text_clean import strip_html
 
@@ -127,6 +128,11 @@ async def _decide(
             await telegram.resolve_message(
                 message_id=action.telegram_message_id, decision="❌ Denied", footer=decided_by
             )
+        return {"ok": True}
+
+    # Defence in depth: never let a safety-flagged reply be approved as-is.
+    if (action.context_json or {}).get("safety"):
+        await telegram.answer_callback(callback_id, "Bewerk eerst — veiligheidswaarschuwing")
         return {"ok": True}
 
     action.status = ActionStatus.APPROVED.value
@@ -280,6 +286,7 @@ async def _render(
     ).scalars().all()
     payload = action.payload_json or {}
     body = payload.get("body", "") if action.action_type == "send_reply" else payload.get("reason", "")
+    safety = (action.context_json or {}).get("safety") or None
     text = build_action_card(
         action_type=action.action_type,
         thread=thread,
@@ -287,8 +294,9 @@ async def _render(
         body=body,
         messages=list(rows),
         edited_by=payload.get("edited_by"),
+        safety_violations=safety,
     )
-    return text, toolbar(action.action_type, action.id, state)
+    return text, toolbar(action.action_type, action.id, state, flagged=bool(safety))
 
 
 # --------------------------------------------------------------------------- #
@@ -330,6 +338,10 @@ async def _apply_edit(
     payload["body"] = new_text
     payload["edited_by"] = editor
     action.payload_json = payload
+    # Re-run safety on the human-edited text so the warning/flag reflects the edit.
+    thread = await db.get(SupportThread, action.thread_id)
+    _, violations = SafetyRules().validate(thread, new_text)
+    action.context_json = {**(action.context_json or {}), "safety": violations}
     await db.commit()
 
     if action.telegram_message_id:

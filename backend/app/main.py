@@ -52,6 +52,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         settings.SLA_AUTO_ESCALATE_ENABLED,
     )
 
+    # Keep the Telegram webhook registered for message + callback_query updates
+    # (best-effort) so slash commands and the Edit force-reply flow never silently
+    # break after a redeploy.
+    from app.services.telegram import register_webhook
+
+    await register_webhook()
+
     # The polling loop is always on — it brings in new threads from Mirakl
     tasks: list[asyncio.Task[None]] = [
         asyncio.create_task(_polling_loop(), name="mirakl_poller"),

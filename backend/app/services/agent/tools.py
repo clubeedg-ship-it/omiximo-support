@@ -29,6 +29,7 @@ from app.services.connectors.invoice import InvoiceConnector
 from app.services.connectors.mirakl import MiraklConnector
 from app.services.connectors.tracking import TrackingConnector
 from app.services.knowledge_service import KnowledgeService
+from app.services.safety_rules import SafetyRules
 
 # OpenAI/OpenRouter-compatible tool definitions.
 TOOL_SCHEMAS: list[dict[str, Any]] = [
@@ -195,8 +196,13 @@ async def _propose_action(
     await ctx.db.flush()
 
     body = args.get("body", "") if action_type == "send_reply" else args.get("reason", "")
-    # Snapshot the gathered facts so the card can be re-rendered later (edit/translate).
-    action.context_json = {"facts": ctx.facts}
+    # Run the hard safety rules on a customer-facing reply (D-003). Violations are
+    # surfaced on the card and withhold the Approve button — never silently sent.
+    violations: list[str] = []
+    if action_type == "send_reply":
+        _, violations = SafetyRules().validate(ctx.thread, body)
+    # Snapshot facts + safety so the card can be re-rendered later (edit/translate).
+    action.context_json = {"facts": ctx.facts, "safety": violations}
     messages = await _thread_messages(ctx.db, ctx.thread.id)
     text = build_action_card(
         action_type=action_type,
@@ -204,8 +210,9 @@ async def _propose_action(
         facts=ctx.facts,
         body=body,
         messages=messages,
+        safety_violations=violations or None,
     )
-    markup = toolbar(action_type, action.id, "proposed")
+    markup = toolbar(action_type, action.id, "proposed", flagged=bool(violations))
     message_id = await ctx.telegram.send_card(text, markup)
     action.telegram_message_id = message_id
     await ctx.db.flush()

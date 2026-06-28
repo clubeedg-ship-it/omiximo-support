@@ -272,3 +272,23 @@ def test_toolbar_translated_has_back_and_approve():
     datas = _datas(toolbar("send_reply", "AID", "translated"))
     assert "approve:AID" in datas
     assert "back:AID" in datas
+
+
+def test_safety_violations_render_warning_block():
+    card = build_action_card(
+        action_type="send_reply",
+        thread=_thread(),
+        facts={},
+        body="ok",
+        safety_violations=["R1: refund promise detected"],
+    )
+    assert "⚠️" in card
+    assert "Veiligheidswaarschuwing" in card
+    assert "R1: refund promise detected" in card
+
+
+def test_toolbar_flagged_withholds_approve():
+    datas = _datas(toolbar("send_reply", "AID", "proposed", flagged=True))
+    assert "approve:AID" not in datas
+    assert "edit:AID" in datas
+    assert "deny:AID" in datas
