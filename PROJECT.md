@@ -248,8 +248,10 @@ Migrations: 001 initial → … → 007 thread_messages → 008 mirakl_message_i
 ```yaml
 as_of: 2026-06-28
 mode: >
-  LIVE (D-020), commit b1b6844, 494 tests. Post-go-live UX fixes from live use:
-  operator threads ESCALATE instead of producing a blocked draft; the agent skips
+  LIVE (D-020), commit 3f02f14, 493 tests. Post-go-live UX fixes from live use:
+  safety gating is WARN-ONLY (⚠️ always shows, Approve never withheld — operator
+  decides, since every reply is human-reviewed and AUTO_SEND is off); operator
+  threads ESCALATE instead of producing a blocked draft; the agent skips
   AWAITING_CUSTOMER/RESOLVED threads (don't draft when we already replied); 🌐
   Translate now renders the WHOLE card (labels + facts + conversation + reply) in
   the chosen language with HTML preserved (translate_html + plain-text fallback).
