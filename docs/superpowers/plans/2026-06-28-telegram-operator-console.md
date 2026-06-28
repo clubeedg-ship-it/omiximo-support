@@ -102,12 +102,13 @@ The backbone. Without it, every feature bolts onto the webhook messily.
   `render_card(action, thread, facts, *, state) -> (text, reply_markup)` that
   owns body + toolbar per state. `build_action_card` becomes its `proposed`/
   `decided` body. `button_labels` folds into the toolbar builder.
-- **Persist the dossier facts.** Facts currently live only in-memory
-  (`ToolContext.facts`) during the run. Edit/Translate/re-post need them later.
-  **Add `context_json` to `AgentAction`** (JSON, nullable; migration 012) and
-  snapshot `ctx.facts` + classification into it at proposal time. Re-rendering
-  reads the snapshot — no re-fetching the marketplace.
 - **First commands:** `/help`, `/status` — exercise the router end to end.
+- **Acks:** `answerCallbackQuery` on every tap so the client spinner clears.
+
+*Built lean (no migration): `context_json` on `AgentAction` + the
+`telegram_sessions` table (migration 012) and the state-aware renderer/toolbar
+are **deferred to F2/F3**, where Edit/Translate first need to re-render a card
+after the run. Decided cards still strip buttons + post a reply note as before.*
 
 ### F2 — Edit draft (`✏️`)
 
@@ -162,10 +163,11 @@ dossier card (increment 0) batches with F1's first deploy. NodePorts
 
 ## 8. Sequencing
 
-`0 (done)` → **F0.5 (conversation block)** → **F1 (router + edit-in-place +
-state renderer + `context_json` + `/help`,`/status`)** → F2 (Edit) →
-F3 (Translate, language picker) → F4 (cross-thread nav) → F5 (system cmds).
-The dossier card (increment 0) + F0.5 batch into the first deploy. Revisit the
+`0 (done)` → **F0.5 (conversation block — done)** → **F1 (router + `/help`,
+`/status` + answerCallbackQuery — done)** → F2 (Edit; brings migration 012 +
+state renderer/toolbar + edit_card/prompt_reply) → F3 (Translate, language
+picker) → F4 (cross-thread nav) → F5 (system cmds). The dossier card
+(increment 0) + F0.5 + F1 batch into the first deploy. Revisit the
 `AGENT_ENABLED` go-live once the console feels comfortable to operate.
 
 ## 9. Decisions (resolved)

@@ -182,6 +182,10 @@ Each entry: date · id · title, then Decision / Rationale.
 **Decision:** `AGENT_FAKE_MIRAKL` makes the read tools return built-in fixtures in the real order format (`fake_mirakl.py`), simulates the send on approve, and enables `POST /api/v1/agent/test-run` to fire a synthetic thread through the full loop into the Telegram channel.
 **Rationale:** Polish the agent + Telegram workflow end-to-end with realistic data without touching the live marketplace or flipping `AGENT_ENABLED` on real customer threads.
 
+### 2026-06-28 · D-018 · Telegram operator console (self-contained card + router)
+**Decision:** Telegram is the operator console. The approval card is self-contained — classification + order/tracking/knowledge facts + full threaded conversation history (👤 Klant / 🧑‍💼 Wij quotes, newest marked, oldest collapsed into an expandable quote when long) + the proposed reply/escalation — with action-aware buttons (Approve/Deny vs Escalate/Dismiss). Card rendering is a pure, unit-tested module (`services/agent/cards.py`). The webhook is now a router that dispatches button callbacks + slash commands (`/help`, `/status`), acking taps via `answerCallbackQuery`. Roadmap in `docs/superpowers/plans/2026-06-28-telegram-operator-console.md`: F2 Edit draft → F3 Translate (language picker) → F4 cross-thread nav → F5 system cmds.
+**Rationale:** The reviewer must see everything they act on in one message, with prior conversation visible in-place. A router makes adding Edit/Translate/nav handlers clean instead of bolting onto a single-purpose webhook. `context_json` + `telegram_sessions` (migration 012) are deferred to F2 — only needed once cards re-render after the run.
+
 ---
 
 ## §C — Roadmap & open questions
@@ -236,21 +240,22 @@ Migrations: 001 initial → … → 007 thread_messages → 008 mirakl_message_i
 ```yaml
 as_of: 2026-06-28
 mode: >
-  Phase 1 agent shipped + deployed to k3s, gated off (AGENT_ENABLED=False) and
-  running in AGENT_FAKE_MIRAKL=true for polishing. main is clean at f78d84e,
-  447 backend tests pass, migration 011 applied, DB on a PVC StatefulSet (10MB,
-  126 threads). Telegram fully wired (bot @omiximo_support_bot, group -5262705193,
-  webhook registered). /api/v1/agent/test-run drives a synthetic thread through
-  the full loop into the group.
+  Telegram operator console underway (D-018). main clean at fbf00b2, 469 backend
+  tests pass (all TDD), migration 011 applied. Agent still gated off
+  (AGENT_ENABLED=False), running AGENT_FAKE_MIRAKL=true. Shipped this session: a
+  self-contained dossier approval card (classification + order/tracking/knowledge
+  facts + full threaded conversation history + proposed reply/escalation, action-
+  aware buttons) in the pure module services/agent/cards.py; the webhook
+  refactored into a router with /help + /status and answerCallbackQuery acks.
+  NOT yet deployed to k3s (the running image predates these commits).
 what_matters: >
-  Polish the Telegram workflow with the user, then make the go-live call. The
-  agent already produces real, order-aware replies behind the Approve gate —
-  the remaining work is UX (card formatting/verbosity) and the AGENT_ENABLED flip.
+  Build the console per docs/superpowers/plans/2026-06-28-telegram-operator-console.md.
+  Card foundation (incr 0 + ETA fix + F0.5 conversation block) and F1 router are
+  done, committed, tested. Next is F2 (Edit draft), which needs migration 012.
 next_actions:
-  - Fire the other scenarios (where_is_order, wrong_item) and polish card layout/verbosity with the user.
-  - Fold order facts + classification INTO the approval card (currently separate narration lines).
-  - Decide + execute go-live: flip AGENT_ENABLED=true (full catch-up of ~23 unclassified vs park-backlog).
-  - Phase 2: build get_tracking/get_invoice connectors (still {} stubs), then approve_return/issue_refund actions.
+  - Deploy current code to k3s (Recreate, replicas:1) + fire the 3 test-run scenarios to see the new cards live (task still open).
+  - F2 Edit draft → migration 012 (AgentAction.context_json + telegram_sessions table), edit_card/prompt_reply service methods, ✏️ Edit via force-reply → re-render the card. Then F3 Translate (language picker), F4 cross-thread nav, F5 system cmds.
+  - Carried over: go-live decision (flip AGENT_ENABLED=true vs park backlog); Phase 2 get_tracking/get_invoice connectors + approve_return/issue_refund actions.
 do_not:
   - Do not bump api replicas or switch to RollingUpdate (in-process schedulers → double-send). D-016.
   - Do not change NodePorts 30800/30173 (host nginx routing) or move Postgres off the PVC.

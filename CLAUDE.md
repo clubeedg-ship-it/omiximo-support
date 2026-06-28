@@ -53,24 +53,27 @@ Retrieve a section: `sed -n '/^## §E/,/^## §F/p' PROJECT.md`
 > Hot state — overwritten at session close. YAML.
 ```yaml
 branch: main
-commit: f78d84e
+commit: fbf00b2
 state: >
-  Reliability-hardened + autonomous agent Phase 1 built, tested (447 backend tests),
-  committed, and DEPLOYED to k3s. Stack is prod-grade: prod Dockerfiles, k8s/ IaC,
-  Postgres StatefulSet on a PVC (migrated off the old hostPath; pruned 43M audit-spam
-  rows, 18GB -> 10MB, 126 threads intact). The tool-calling agent (services/agent/)
-  + Telegram Approve/Deny gate are live behind AGENT_ENABLED (still False) and
-  currently running in AGENT_FAKE_MIRAKL=true mode for workflow polishing. Telegram
-  wired end-to-end: bot @omiximo_support_bot, group "Omiximo Support Activity Channel"
-  (-5262705193), webhook registered. /api/v1/agent/test-run drives a synthetic thread
-  through the full loop into the group; a fired test produced a real, order-aware
-  Dutch reply as an Approve card.
+  Telegram operator console underway (D-018; plan in docs/superpowers/plans/
+  2026-06-28-telegram-operator-console.md). 469 backend tests pass (all TDD).
+  Agent still gated off (AGENT_ENABLED=False), running AGENT_FAKE_MIRAKL=true.
+  Shipped this session: a self-contained dossier approval card — classification +
+  order/tracking/knowledge facts + full threaded conversation history (Klant/Wij
+  quotes, newest marked, oldest collapsed when long) + proposed reply/escalation,
+  with action-aware buttons (Approve/Deny vs Escalate/Dismiss) — in the pure
+  module services/agent/cards.py; ToolContext now snapshots read-tool facts;
+  send_approval_request takes prebuilt text + labels. Webhook refactored into a
+  router (callback dispatch + slash commands /help, /status, answerCallbackQuery
+  acks). NOT yet deployed to k3s — the running image predates these commits.
 next: >
-  Polish the Telegram workflow formatting with the user (card layout, verbosity).
-  Then the go-live decision: flip AGENT_ENABLED=true (full catch-up of ~23
-  unclassified threads vs. park-backlog). Phase 2: build get_tracking/get_invoice
-  connectors (still {} stubs), then approve_return / issue_refund actions.
-blockers: []   # VM had two Tailscale drop-outs this session; user says now stable
+  Deploy current code to k3s (Recreate, replicas:1) + fire the 3 fake test-run
+  scenarios to see the new cards live. Then F2 (Edit draft): migration 012
+  (AgentAction.context_json + telegram_sessions), edit_card/prompt_reply, ✏️ Edit
+  via force-reply → re-render. Then F3 Translate (language picker), F4 cross-thread
+  nav, F5 system cmds. Carried over: go-live flip AGENT_ENABLED=true vs park
+  backlog; Phase 2 get_tracking/get_invoice connectors + approve_return/issue_refund.
+blockers: []
 updated: 2026-06-28
 ```
 
