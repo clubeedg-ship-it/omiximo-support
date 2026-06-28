@@ -240,21 +240,21 @@ Migrations: 001 initial → … → 007 thread_messages → 008 mirakl_message_i
 ```yaml
 as_of: 2026-06-28
 mode: >
-  Telegram operator console underway (D-018). main clean at fbf00b2, 469 backend
-  tests pass (all TDD), migration 011 applied. Agent still gated off
-  (AGENT_ENABLED=False), running AGENT_FAKE_MIRAKL=true. Shipped this session: a
-  self-contained dossier approval card (classification + order/tracking/knowledge
-  facts + full threaded conversation history + proposed reply/escalation, action-
-  aware buttons) in the pure module services/agent/cards.py; the webhook
-  refactored into a router with /help + /status and answerCallbackQuery acks.
-  NOT yet deployed to k3s (the running image predates these commits).
+  Telegram operator console F0.5–F5 BUILT (D-018). main clean at 296dc22, 479
+  backend tests pass (all TDD), migration 011 applied — migration 012 written but
+  NOT yet applied to the live DB. Agent still gated off (AGENT_ENABLED=False),
+  running AGENT_FAKE_MIRAKL=true. Shipped: self-contained dossier card (cards.py)
+  with threaded conversation history; router webhook; ✏️ Edit via force-reply →
+  re-render (telegram_sessions + context_json); 🌐 Translate language-picker →
+  translated view (MessageInsightService.translate_to); /pending, /thread, /stats,
+  /help, /status. NOT yet deployed to k3s (running image predates all this) — so
+  not exercised against the live bot.
 what_matters: >
-  Build the console per docs/superpowers/plans/2026-06-28-telegram-operator-console.md.
-  Card foundation (incr 0 + ETA fix + F0.5 conversation block) and F1 router are
-  done, committed, tested. Next is F2 (Edit draft), which needs migration 012.
+  Console plan in docs/superpowers/plans/2026-06-28-telegram-operator-console.md.
+  All increments F0.5–F5 are coded + unit/integration tested. The remaining gap is
+  live acceptance: deploy to k3s, apply migration 012, fire test-runs, tap buttons.
 next_actions:
-  - Deploy current code to k3s (Recreate, replicas:1) + fire the 3 test-run scenarios to see the new cards live (task still open).
-  - F2 Edit draft → migration 012 (AgentAction.context_json + telegram_sessions table), edit_card/prompt_reply service methods, ✏️ Edit via force-reply → re-render the card. Then F3 Translate (language picker), F4 cross-thread nav, F5 system cmds.
+  - Deploy to k3s (Recreate, replicas:1), run `alembic upgrade head` (migration 012) on the live DB, fire the 3 test-run scenarios + exercise Edit/Translate/commands in the channel.
   - Carried over: go-live decision (flip AGENT_ENABLED=true vs park backlog); Phase 2 get_tracking/get_invoice connectors + approve_return/issue_refund actions.
 do_not:
   - Do not bump api replicas or switch to RollingUpdate (in-process schedulers → double-send). D-016.
