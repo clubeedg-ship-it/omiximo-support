@@ -90,6 +90,8 @@ class AgentRunner:
 
                 result = await execute_tool(ctx, name, args)
                 await self._log(db, thread, "tool_result", {"tool": name, "result": result})
+                if name not in ("send_reply", "escalate"):
+                    await self._narrate(_format_tool_result(name, result))
 
                 messages.append(
                     {
@@ -192,3 +194,36 @@ class AgentRunner:
             )
         )
         await db.flush()
+
+    async def _narrate(self, text: str) -> None:
+        """Post a step line to the Telegram activity channel (best-effort)."""
+        if settings.AGENT_TELEGRAM_VERBOSE:
+            await self._telegram.send_activity(text)
+
+
+def _format_tool_result(name: str, result: dict[str, Any]) -> str:
+    """One concise activity line summarising a read-tool result."""
+    if not isinstance(result, dict):
+        return f"🔧 {name}"
+    if name == "get_order":
+        oid = result.get("order_id", "?")
+        status = result.get("status") or "?"
+        item = result.get("item")
+        tail = f" — {item}" if item else ""
+        return f"🔎 <b>Order {oid}</b>: {status}{tail}"
+    if name == "get_tracking":
+        if not result:
+            return "📦 Tracking: geen gegevens"
+        return (
+            f"📦 Tracking {result.get('tracking_number', '?')} "
+            f"({result.get('carrier', '?')}): {result.get('status', '?')} — "
+            f"{result.get('last_event', '')}"
+        )
+    if name == "get_invoice":
+        if not result:
+            return "🧾 Factuur: geen gegevens"
+        return f"🧾 Factuur {result.get('invoice_number', '?')}: {result.get('status', '?')}"
+    if name == "search_knowledge":
+        n = len(result.get("entries", []))
+        return f"📚 Kennisbank: {n} resultaat(en)"
+    return f"🔧 {name}"

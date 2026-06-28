@@ -111,6 +111,14 @@ class Settings(BaseSettings):
     AGENT_MAX_STEPS: int = 6
     # Public base URL used to register the Telegram webhook.
     PUBLIC_BASE_URL: str = "https://api-support.abbamarkt.nl"
+    # Narrate each agent step (classification, tool calls) into the Telegram
+    # activity channel — the live "workflow log".
+    AGENT_TELEGRAM_VERBOSE: bool = True
+    # Use built-in fake Mirakl fixtures instead of live Mirakl calls. Lets us
+    # test/polish the full agent + Telegram flow end-to-end with realistic data
+    # (matching the real order format) without touching the marketplace. When on,
+    # approving a proposed send is simulated (no real message is sent).
+    AGENT_FAKE_MIRAKL: bool = False
 
     # ------------------------------------------------------------------ #
     # CORS                                                                 #

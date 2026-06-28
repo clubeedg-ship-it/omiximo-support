@@ -13,6 +13,9 @@ class FakeTelegram:
     async def send_approval_request(self, *, action_id, title, body):
         return 5
 
+    async def send_activity(self, text):
+        return None
+
 
 def _assistant_tool_call(call_id, name, arguments):
     return {

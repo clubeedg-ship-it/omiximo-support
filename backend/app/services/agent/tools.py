@@ -20,6 +20,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.models.agent_action import ActionStatus, AgentAction
 from app.services.connectors.invoice import InvoiceConnector
 from app.services.connectors.mirakl import MiraklConnector
@@ -113,6 +114,15 @@ class ToolContext:
 async def execute_tool(ctx: ToolContext, name: str, args: dict[str, Any]) -> dict[str, Any]:
     """Run a tool by name. Read tools return data; action tools create proposals."""
     order_id = ctx.thread.mirakl_order_id
+
+    if settings.AGENT_FAKE_MIRAKL and name in ("get_order", "get_tracking", "get_invoice"):
+        from app.services.agent import fake_mirakl
+
+        return {
+            "get_order": fake_mirakl.fake_order,
+            "get_tracking": fake_mirakl.fake_tracking,
+            "get_invoice": fake_mirakl.fake_invoice,
+        }[name](order_id)
 
     if name == "get_order":
         return await MiraklConnector(ctx.account).fetch_context(order_id)

@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter, Depends
 
+from app.api.agent import router as agent_router
 from app.api.alerts import router as alerts_router
 from app.api.classification import router as classification_router
 from app.api.knowledge import router as knowledge_router
@@ -20,6 +21,8 @@ api_router.include_router(webhooks_router)
 # Telegram callbacks can't present a Clerk token; authenticity is the
 # X-Telegram-Bot-Api-Secret-Token header checked inside the handler.
 api_router.include_router(telegram_router)
+# Agent test-run: self-gated on AGENT_FAKE_MIRAKL (403 otherwise).
+api_router.include_router(agent_router)
 protected_api_router.include_router(threads_router)
 protected_api_router.include_router(accounts_router)
 protected_api_router.include_router(templates_router)

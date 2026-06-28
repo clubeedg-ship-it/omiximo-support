@@ -104,8 +104,12 @@ async def _execute_action(
     if action.action_type == "send_reply":
         body = action.payload_json.get("body", "")
         try:
-            async with MiraklClient(account) as client:
-                await client.send_reply(thread_id=thread.mirakl_thread_id, body=body)
+            if settings.AGENT_FAKE_MIRAKL:
+                # Test/polish mode: simulate the send, never hit the marketplace.
+                pass
+            else:
+                async with MiraklClient(account) as client:
+                    await client.send_reply(thread_id=thread.mirakl_thread_id, body=body)
         except Exception as exc:  # noqa: BLE001
             action.status = ActionStatus.FAILED.value
             action.result_json = {"error": str(exc)}
@@ -133,9 +137,10 @@ async def _execute_action(
                           detail_json={"action_type": "send_reply", "action_id": str(action.id)}))
         await db.commit()
         if action.telegram_message_id:
+            decision = "✅ Sent (simulated)" if settings.AGENT_FAKE_MIRAKL else "✅ Sent"
             await telegram.resolve_message(
                 message_id=action.telegram_message_id,
-                decision="✅ Sent", footer=action.decided_by or "")
+                decision=decision, footer=action.decided_by or "")
         return
 
     if action.action_type == "escalate":
