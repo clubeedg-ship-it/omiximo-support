@@ -53,8 +53,12 @@ Retrieve a section: `sed -n '/^## §E/,/^## §F/p' PROJECT.md`
 > Hot state — overwritten at session close. YAML.
 ```yaml
 branch: main
-commit: 3e0ed40
+commit: b1b6844
 state: >
+  Post-go-live UX fixes (494 tests): operator threads now ESCALATE (not a blocked
+  draft); agent skips AWAITING_CUSTOMER/RESOLVED threads; 🌐 Translate renders the
+  WHOLE card (labels+facts+content) in the target language with HTML preserved
+  (translate_html, plain-text fallback). Below is the go-live baseline —
   LIVE (D-020): AGENT_ENABLED=true + AGENT_FAKE_MIRAKL=false on k3s — the agent
   drafts REAL customer threads as human-gated approval cards (AUTO_SEND_ENABLED=
   False; nothing sends without a tap). 492 backend tests pass (all TDD), migration

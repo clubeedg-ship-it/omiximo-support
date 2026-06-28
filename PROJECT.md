@@ -248,7 +248,12 @@ Migrations: 001 initial → … → 007 thread_messages → 008 mirakl_message_i
 ```yaml
 as_of: 2026-06-28
 mode: >
-  LIVE (D-020). AGENT_ENABLED=true + AGENT_FAKE_MIRAKL=false on k3s — the agent
+  LIVE (D-020), commit b1b6844, 494 tests. Post-go-live UX fixes from live use:
+  operator threads ESCALATE instead of producing a blocked draft; the agent skips
+  AWAITING_CUSTOMER/RESOLVED threads (don't draft when we already replied); 🌐
+  Translate now renders the WHOLE card (labels + facts + conversation + reply) in
+  the chosen language with HTML preserved (translate_html + plain-text fallback).
+  --- Go-live baseline: AGENT_ENABLED=true + AGENT_FAKE_MIRAKL=false on k3s — the agent
   drafts REAL customer threads as human-gated approval cards (AUTO_SEND_ENABLED=
   False, nothing sends without a tap). 492 backend tests pass (all TDD), migration
   012 applied. Console (D-018) + Phase 2 Mirakl connectors (D-019) + safety-gating
