@@ -18,7 +18,7 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -27,6 +27,9 @@ from app.models.agent_action import ActionStatus, AgentAction
 from app.models.agent_event import AgentEvent
 from app.models.marketplace_account import MarketplaceAccount
 from app.models.support_thread import SupportThread, ThreadStatus
+from app.models.telegram_session import TelegramSession
+from app.models.thread_message import ThreadMessage
+from app.services.agent.cards import build_action_card, toolbar
 from app.services.audit import write_audit_log
 from app.services.mirakl_client import MiraklClient
 from app.services.telegram import TelegramService
@@ -58,32 +61,47 @@ async def telegram_webhook(
 
     message = update.get("message")
     if message:
-        return await _handle_command(db, telegram, message)
+        return await _handle_message(db, telegram, message)
 
     return {"ok": True}
+
+
+# --------------------------------------------------------------------------- #
+# Callback (button tap) dispatch                                               #
+# --------------------------------------------------------------------------- #
 
 
 async def _handle_callback(
     db: AsyncSession, telegram: TelegramService, callback: dict
 ) -> dict[str, bool]:
-    """Dispatch a button tap. Only approve:/deny: are wired today."""
+    """Route a button tap by its callback_data verb."""
     callback_id = callback.get("id") or ""
     data = str(callback.get("data") or "")
     sender = callback.get("from") or {}
-    decided_by = sender.get("username") or str(sender.get("id") or "telegram")
+    actor = sender.get("username") or str(sender.get("id") or "telegram")
+    chat_id = str(((callback.get("message") or {}).get("chat") or {}).get("id") or "")
 
-    decision, _, action_id_str = data.partition(":")
-    if decision not in ("approve", "deny"):
-        await telegram.answer_callback(callback_id)
-        return {"ok": True}
-    try:
-        action_id = uuid.UUID(action_id_str)
-    except ValueError:
-        await telegram.answer_callback(callback_id)
-        return {"ok": True}
+    verb, _, arg = data.partition(":")
+    if verb in ("approve", "deny"):
+        return await _decide(db, telegram, callback_id, verb, arg, actor)
+    if verb == "edit":
+        return await _start_edit(db, telegram, callback_id, arg, chat_id)
+    if verb == "cancel":
+        return await _cancel_edit(db, telegram, callback_id, arg)
+    await telegram.answer_callback(callback_id)
+    return {"ok": True}
 
-    action = await db.get(AgentAction, action_id)
-    if action is None or action.status != ActionStatus.PROPOSED.value:
+
+async def _decide(
+    db: AsyncSession,
+    telegram: TelegramService,
+    callback_id: str,
+    decision: str,
+    action_id_str: str,
+    decided_by: str,
+) -> dict[str, bool]:
+    action = await _load_proposed(db, action_id_str)
+    if action is None:
         await telegram.answer_callback(callback_id, "Al verwerkt")
         return {"ok": True}  # unknown or already decided — idempotent no-op
 
@@ -100,11 +118,149 @@ async def _handle_callback(
             )
         return {"ok": True}
 
-    # approve
     action.status = ActionStatus.APPROVED.value
     await db.flush()
     await telegram.answer_callback(callback_id, "Goedgekeurd ✅")
     await _execute_action(db, action, telegram)
+    return {"ok": True}
+
+
+async def _start_edit(
+    db: AsyncSession, telegram: TelegramService, callback_id: str, action_id_str: str, chat_id: str
+) -> dict[str, bool]:
+    """Ask the operator to type a corrected reply (force-reply) and await it."""
+    action = await _load_proposed(db, action_id_str)
+    if action is None:
+        await telegram.answer_callback(callback_id, "Niet meer beschikbaar")
+        return {"ok": True}
+    if action.action_type != "send_reply":
+        await telegram.answer_callback(callback_id, "Alleen antwoorden zijn bewerkbaar")
+        return {"ok": True}
+
+    await telegram.answer_callback(callback_id, "Stuur de nieuwe tekst")
+    prompt_id = await telegram.prompt_reply(
+        "✍️ Stuur de gecorrigeerde reactie als <b>antwoord</b> op dit bericht."
+    )
+    if action.telegram_message_id:
+        text, _ = await _render(db, action)
+        await telegram.edit_card(
+            message_id=action.telegram_message_id,
+            text=text,
+            reply_markup=toolbar(action.action_type, action.id, "editing"),
+        )
+    if prompt_id is not None:
+        db.add(
+            TelegramSession(
+                id=uuid.uuid4(),
+                chat_id=chat_id,
+                prompt_message_id=prompt_id,
+                action_id=action.id,
+                kind="edit",
+            )
+        )
+        await db.commit()
+    return {"ok": True}
+
+
+async def _cancel_edit(
+    db: AsyncSession, telegram: TelegramService, callback_id: str, action_id_str: str
+) -> dict[str, bool]:
+    action = await _load_proposed(db, action_id_str)
+    if action is not None:
+        await db.execute(delete(TelegramSession).where(TelegramSession.action_id == action.id))
+        await db.commit()
+    await telegram.answer_callback(callback_id, "Geannuleerd")
+    if action is not None and action.telegram_message_id:
+        text, markup = await _render(db, action)
+        await telegram.edit_card(
+            message_id=action.telegram_message_id, text=text, reply_markup=markup
+        )
+    return {"ok": True}
+
+
+async def _load_proposed(db: AsyncSession, action_id_str: str) -> AgentAction | None:
+    try:
+        action_id = uuid.UUID(action_id_str)
+    except ValueError:
+        return None
+    action = await db.get(AgentAction, action_id)
+    if action is None or action.status != ActionStatus.PROPOSED.value:
+        return None
+    return action
+
+
+async def _render(
+    db: AsyncSession, action: AgentAction, *, state: str = "proposed"
+) -> tuple[str, dict]:
+    """Re-render a proposed action's card (text + toolbar) from persisted data."""
+    thread = await db.get(SupportThread, action.thread_id)
+    facts = (action.context_json or {}).get("facts", {})
+    rows = (
+        await db.execute(
+            select(ThreadMessage)
+            .where(ThreadMessage.thread_id == action.thread_id)
+            .order_by(ThreadMessage.sequence_number)
+        )
+    ).scalars().all()
+    payload = action.payload_json or {}
+    body = payload.get("body", "") if action.action_type == "send_reply" else payload.get("reason", "")
+    text = build_action_card(
+        action_type=action.action_type,
+        thread=thread,
+        facts=facts,
+        body=body,
+        messages=list(rows),
+        edited_by=payload.get("edited_by"),
+    )
+    return text, toolbar(action.action_type, action.id, state)
+
+
+# --------------------------------------------------------------------------- #
+# Message dispatch (force-reply edits + slash commands)                        #
+# --------------------------------------------------------------------------- #
+
+
+async def _handle_message(
+    db: AsyncSession, telegram: TelegramService, message: dict
+) -> dict[str, bool]:
+    """A reply to an edit prompt becomes an edit; otherwise try a slash command."""
+    reply_to = message.get("reply_to_message") or {}
+    prompt_id = reply_to.get("message_id")
+    if prompt_id is not None:
+        session = (
+            await db.execute(
+                select(TelegramSession).where(TelegramSession.prompt_message_id == prompt_id)
+            )
+        ).scalar_one_or_none()
+        if session is not None:
+            return await _apply_edit(
+                db, telegram, session, (message.get("text") or "").strip(), message.get("from") or {}
+            )
+    return await _handle_command(db, telegram, message)
+
+
+async def _apply_edit(
+    db: AsyncSession, telegram: TelegramService, session: TelegramSession, new_text: str, sender: dict
+) -> dict[str, bool]:
+    editor = sender.get("username") or str(sender.get("id") or "telegram")
+    action = await db.get(AgentAction, session.action_id)
+    await db.execute(delete(TelegramSession).where(TelegramSession.id == session.id))
+
+    if action is None or action.status != ActionStatus.PROPOSED.value or not new_text:
+        await db.commit()
+        return {"ok": True}
+
+    payload = dict(action.payload_json or {})
+    payload["body"] = new_text
+    payload["edited_by"] = editor
+    action.payload_json = payload
+    await db.commit()
+
+    if action.telegram_message_id:
+        text, markup = await _render(db, action)
+        await telegram.edit_card(
+            message_id=action.telegram_message_id, text=text, reply_markup=markup
+        )
     return {"ok": True}
 
 

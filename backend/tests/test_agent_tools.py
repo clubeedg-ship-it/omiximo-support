@@ -15,20 +15,19 @@ class FakeTelegram:
     enabled = True
 
     def __init__(self):
-        self.requests = []
+        self.cards = []
 
-    async def send_approval_request(
-        self, *, action_id, text, approve_label="✅ Approve", deny_label="❌ Deny"
-    ):
-        self.requests.append(
-            {
-                "action_id": action_id,
-                "text": text,
-                "approve_label": approve_label,
-                "deny_label": deny_label,
-            }
-        )
+    async def send_card(self, text, reply_markup=None):
+        self.cards.append({"text": text, "reply_markup": reply_markup})
         return 7
+
+
+def _button_datas(reply_markup):
+    return [b["callback_data"] for row in reply_markup["inline_keyboard"] for b in row]
+
+
+def _button_texts(reply_markup):
+    return [b["text"] for row in reply_markup["inline_keyboard"] for b in row]
 
 
 @pytest.mark.asyncio
@@ -54,10 +53,13 @@ async def test_send_reply_creates_proposal_and_requests_approval(db, sample_acco
     assert ctx.proposed_action.status == ActionStatus.PROPOSED.value
     assert ctx.proposed_action.payload_json["body"] == "Hallo, hier is uw oplossing."
     assert ctx.proposed_action.telegram_message_id == 7
-    assert len(tg.requests) == 1
-    assert "Hallo" in tg.requests[0]["text"]
-    assert tg.requests[0]["approve_label"] == "✅ Approve"
-    assert tg.requests[0]["deny_label"] == "❌ Deny"
+    assert len(tg.cards) == 1
+    assert "Hallo" in tg.cards[0]["text"]
+    datas = _button_datas(tg.cards[0]["reply_markup"])
+    assert f"approve:{ctx.proposed_action.id}" in datas
+    assert f"edit:{ctx.proposed_action.id}" in datas
+    # facts snapshot persisted for later re-render
+    assert ctx.proposed_action.context_json == {"facts": ctx.facts}
 
 
 @pytest.mark.asyncio
@@ -83,7 +85,7 @@ async def test_send_reply_card_folds_in_gathered_facts_and_classification(
     await execute_tool(ctx, "get_order", {})
     await execute_tool(ctx, "send_reply", {"body": "Beste Lisa, het spijt ons."})
 
-    text = tg.requests[0]["text"]
+    text = tg.cards[0]["text"]
     assert "GREEN" in text  # classification folded into the card
     assert "DELIVERED" in text
     assert "Sony WH-1000XM5" in text
@@ -118,7 +120,7 @@ async def test_send_reply_card_includes_full_conversation_when_multi_message(
     ctx = ToolContext(db=db, thread=sample_thread, account=sample_account, telegram=tg)
     await execute_tool(ctx, "send_reply", {"body": "Bedankt voor uw geduld."})
 
-    text = tg.requests[0]["text"]
+    text = tg.cards[0]["text"]
     assert "Gesprek" in text
     assert "3 berichten" in text
     assert "Nog steeds niks ontvangen." in text
@@ -132,12 +134,13 @@ async def test_escalate_uses_escalation_card_and_buttons(db, sample_account, sam
     out = await execute_tool(ctx, "escalate", {"reason": "Vereist een menselijk besluit."})
     assert out["status"] == "awaiting_approval"
     assert ctx.proposed_action.action_type == "escalate"
-    text = tg.requests[0]["text"]
+    text = tg.cards[0]["text"]
     assert "Escalatie" in text
     assert "Vereist een menselijk besluit." in text
     assert "Voorgestelde reactie" not in text
-    assert tg.requests[0]["approve_label"] == "⤴️ Escalate"
-    assert tg.requests[0]["deny_label"] == "❌ Dismiss"
+    texts = _button_texts(tg.cards[0]["reply_markup"])
+    assert any("Escalate" in t for t in texts)
+    assert any("Dismiss" in t for t in texts)
 
 
 @pytest.mark.asyncio

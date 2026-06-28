@@ -38,18 +38,59 @@ _TURN_BODY_MAX = 400
 _CONVO_COLLAPSE_OVER = 5
 _CONVO_KEEP_EXPANDED = 2
 
-# Per-action inline-button labels. ``callback_data`` stays approve:/deny:
-# regardless, so the webhook is unaffected — only the visible text changes.
-_BUTTONS = {
-    "send_reply": ("✅ Approve", "❌ Deny"),
-    "escalate": ("⤴️ Escalate", "❌ Dismiss"),
-}
-_DEFAULT_BUTTONS = ("✅ Approve", "❌ Deny")
+# Languages offered by the 🌐 Translate picker.
+_DEFAULT_LANGUAGES = [
+    ("🇳🇱 Nederlands", "nl"),
+    ("🇬🇧 English", "en"),
+    ("🇫🇷 Français", "fr"),
+    ("🇩🇪 Deutsch", "de"),
+]
 
 
-def button_labels(action_type: str) -> tuple[str, str]:
-    """Return ``(approve_label, deny_label)`` for an action type."""
-    return _BUTTONS.get(action_type, _DEFAULT_BUTTONS)
+def _kb(rows: list[list[tuple[str, str]]]) -> dict[str, Any]:
+    return {
+        "inline_keyboard": [
+            [{"text": text, "callback_data": data} for text, data in row] for row in rows
+        ]
+    }
+
+
+def toolbar(
+    action_type: str,
+    action_id: Any,
+    state: str = "proposed",
+    *,
+    languages: list[tuple[str, str]] | None = None,
+) -> dict[str, Any]:
+    """Inline keyboard for a card in a given state.
+
+    ``callback_data`` carries the action id (and language code for translation)
+    so the webhook router can dispatch without server-side state.
+    """
+    aid = action_id
+    if state == "editing":
+        return _kb([[("🔙 Annuleren", f"cancel:{aid}")]])
+    if state == "picking_lang":
+        langs = languages or _DEFAULT_LANGUAGES
+        rows = [[(label, f"trset:{aid}:{code}")] for label, code in langs]
+        rows.append([("🔙 Terug", f"back:{aid}")])
+        return _kb(rows)
+    if state == "translated":
+        return _kb(
+            [
+                [("✅ Approve", f"approve:{aid}"), ("✏️ Edit", f"edit:{aid}")],
+                [("🔙 Terug", f"back:{aid}")],
+            ]
+        )
+    # proposed
+    if action_type == "escalate":
+        return _kb([[("⤴️ Escalate", f"approve:{aid}"), ("❌ Dismiss", f"deny:{aid}")]])
+    return _kb(
+        [
+            [("✅ Approve", f"approve:{aid}"), ("❌ Deny", f"deny:{aid}")],
+            [("✏️ Edit", f"edit:{aid}"), ("🌐 Translate", f"tr:{aid}")],
+        ]
+    )
 
 
 def build_action_card(
@@ -59,12 +100,14 @@ def build_action_card(
     facts: dict[str, Any],
     body: str,
     messages: list[Any] | None = None,
+    edited_by: str | None = None,
 ) -> str:
     """Render the full Telegram HTML card for a proposed agent action.
 
     ``messages`` is the thread's conversation turns (oldest first). With more
     than one turn the card renders the full threaded history; with one or none
-    it falls back to a single customer quote.
+    it falls back to a single customer quote. ``edited_by`` marks a reply an
+    operator has hand-edited.
     """
     order = _as_dict(facts.get("get_order"))
     tracking = _as_dict(facts.get("get_tracking"))
@@ -83,7 +126,7 @@ def build_action_card(
     if fact_lines:
         lines += ["", *fact_lines]
 
-    lines += ["", *_body_block(action_type, body)]
+    lines += ["", *_body_block(action_type, body, edited_by)]
 
     return "\n".join(line for line in lines if line is not None)
 
@@ -223,11 +266,14 @@ def _fact_lines(
     return out
 
 
-def _body_block(action_type: str, body: str) -> list[str]:
+def _body_block(action_type: str, body: str, edited_by: str | None = None) -> list[str]:
     safe = _esc(body or "")
     if action_type == "escalate":
         return ["⤴️ <b>Escalatie</b>", f"<blockquote>{safe}</blockquote>"]
-    return ["✍️ <b>Voorgestelde reactie</b>", f"<blockquote>{safe}</blockquote>"]
+    header = "✍️ <b>Voorgestelde reactie</b>"
+    if edited_by:
+        header += f" · ✏️ <i>bewerkt door {_esc(edited_by)}</i>"
+    return [header, f"<blockquote>{safe}</blockquote>"]
 
 
 # --------------------------------------------------------------------------- #

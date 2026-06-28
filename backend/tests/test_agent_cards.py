@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from app.models.support_thread import CustomerLanguage, RiskLevel
-from app.services.agent.cards import build_action_card, button_labels
+from app.services.agent.cards import build_action_card, toolbar
 
 
 def _turn(author_type, body, day, hour, minute, name=None):
@@ -233,8 +233,42 @@ def test_long_conversation_collapses_older_turns():
     assert "nieuwste" in card
 
 
-def test_button_labels_are_action_aware():
-    assert button_labels("send_reply") == ("✅ Approve", "❌ Deny")
-    assert button_labels("escalate") == ("⤴️ Escalate", "❌ Dismiss")
-    # unknown action type falls back to approve/deny
-    assert button_labels("whatever") == ("✅ Approve", "❌ Deny")
+def _datas(markup):
+    return [b["callback_data"] for row in markup["inline_keyboard"] for b in row]
+
+
+def _texts(markup):
+    return [b["text"] for row in markup["inline_keyboard"] for b in row]
+
+
+def test_toolbar_proposed_reply_has_approve_deny_edit_translate():
+    datas = _datas(toolbar("send_reply", "AID", "proposed"))
+    assert "approve:AID" in datas
+    assert "deny:AID" in datas
+    assert "edit:AID" in datas
+    assert "tr:AID" in datas
+
+
+def test_toolbar_proposed_escalate_has_escalate_dismiss():
+    markup = toolbar("escalate", "AID", "proposed")
+    assert any("Escalate" in t for t in _texts(markup))
+    datas = _datas(markup)
+    assert "approve:AID" in datas and "deny:AID" in datas
+    assert "edit:AID" not in datas  # escalations are not edited/translated
+
+
+def test_toolbar_editing_has_cancel_only():
+    assert _datas(toolbar("send_reply", "AID", "editing")) == ["cancel:AID"]
+
+
+def test_toolbar_picking_lang_lists_languages_and_back():
+    datas = _datas(toolbar("send_reply", "AID", "picking_lang"))
+    assert "trset:AID:nl" in datas
+    assert "trset:AID:en" in datas
+    assert "back:AID" in datas
+
+
+def test_toolbar_translated_has_back_and_approve():
+    datas = _datas(toolbar("send_reply", "AID", "translated"))
+    assert "approve:AID" in datas
+    assert "back:AID" in datas

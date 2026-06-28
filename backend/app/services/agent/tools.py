@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models.agent_action import ActionStatus, AgentAction
 from app.models.thread_message import ThreadMessage
-from app.services.agent.cards import build_action_card, button_labels
+from app.services.agent.cards import build_action_card, toolbar
 from app.services.connectors.invoice import InvoiceConnector
 from app.services.connectors.mirakl import MiraklConnector
 from app.services.connectors.tracking import TrackingConnector
@@ -195,6 +195,8 @@ async def _propose_action(
     await ctx.db.flush()
 
     body = args.get("body", "") if action_type == "send_reply" else args.get("reason", "")
+    # Snapshot the gathered facts so the card can be re-rendered later (edit/translate).
+    action.context_json = {"facts": ctx.facts}
     messages = await _thread_messages(ctx.db, ctx.thread.id)
     text = build_action_card(
         action_type=action_type,
@@ -203,10 +205,8 @@ async def _propose_action(
         body=body,
         messages=messages,
     )
-    approve_label, deny_label = button_labels(action_type)
-    message_id = await ctx.telegram.send_approval_request(
-        action_id=action.id, text=text, approve_label=approve_label, deny_label=deny_label
-    )
+    markup = toolbar(action_type, action.id, "proposed")
+    message_id = await ctx.telegram.send_card(text, markup)
     action.telegram_message_id = message_id
     await ctx.db.flush()
 

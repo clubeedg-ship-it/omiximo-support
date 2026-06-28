@@ -10,9 +10,7 @@ from app.services.agent.runner import AgentRunner
 class FakeTelegram:
     enabled = True
 
-    async def send_approval_request(
-        self, *, action_id, text, approve_label="✅ Approve", deny_label="❌ Deny"
-    ):
+    async def send_card(self, text, reply_markup=None):
         return 5
 
     async def send_activity(self, text):

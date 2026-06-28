@@ -18,6 +18,7 @@ from app.models.support_thread import (
     SupportThread,
     ThreadStatus,
 )
+from app.models.telegram_session import TelegramSession
 from app.services.encryption import encrypt
 
 
@@ -137,6 +138,52 @@ async def test_status_command_strips_bot_mention(unauthenticated_client, monkeyp
             "/api/v1/telegram/webhook", json=_command("/status@omiximo_support_bot"))
     assert resp.status_code == 200
     assert sent and "Status" in sent[0]
+
+
+@pytest.mark.asyncio
+async def test_edit_flow_updates_draft_and_rerenders(unauthenticated_client, db, proposal, monkeypatch):
+    monkeypatch.setattr(settings, "TELEGRAM_WEBHOOK_SECRET", "")
+    with patch("app.api.telegram.TelegramService") as tg_cls:
+        inst = tg_cls.return_value
+        inst.answer_callback = AsyncMock()
+        inst.prompt_reply = AsyncMock(return_value=555)
+        inst.edit_card = AsyncMock()
+
+        # 1. operator taps ✏️ Edit → force-reply prompt + session recorded
+        r1 = await unauthenticated_client.post(
+            "/api/v1/telegram/webhook",
+            json={
+                "callback_query": {
+                    "id": "cb-9",
+                    "data": f"edit:{proposal.id}",
+                    "from": {"id": 5, "username": "boss"},
+                    "message": {"chat": {"id": -100}},
+                }
+            },
+        )
+        assert r1.status_code == 200
+        inst.prompt_reply.assert_awaited_once()
+        sessions = (await db.execute(select(TelegramSession))).scalars().all()
+        assert len(sessions) == 1 and sessions[0].prompt_message_id == 555
+
+        # 2. operator replies to the prompt with corrected text
+        r2 = await unauthenticated_client.post(
+            "/api/v1/telegram/webhook",
+            json={
+                "message": {
+                    "text": "Gecorrigeerde reactie.",
+                    "reply_to_message": {"message_id": 555},
+                    "from": {"id": 5, "username": "boss"},
+                }
+            },
+        )
+        assert r2.status_code == 200
+
+    refreshed = await db.get(AgentAction, proposal.id)
+    assert refreshed.payload_json["body"] == "Gecorrigeerde reactie."
+    assert refreshed.payload_json["edited_by"] == "boss"
+    inst.edit_card.assert_awaited()
+    assert (await db.execute(select(TelegramSession))).scalars().all() == []
 
 
 @pytest.mark.asyncio

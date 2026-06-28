@@ -61,6 +61,11 @@ class AgentAction(Base):
     telegram_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     decided_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
     result_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    context_json: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, nullable=True,
+        comment="Snapshot of the read-tool facts the card was built from, "
+        "so the card can be re-rendered (edit/translate) after the run.",
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

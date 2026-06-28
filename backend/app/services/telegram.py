@@ -14,7 +14,6 @@ break thread processing.
 from __future__ import annotations
 
 import logging
-import uuid
 from typing import Any
 
 import httpx
@@ -77,31 +76,50 @@ class TelegramService:
             logger.warning("Telegram answer_callback failed: %s", exc)
         return None
 
-    async def send_approval_request(
-        self,
-        *,
-        action_id: uuid.UUID,
-        text: str,
-        approve_label: str = "✅ Approve",
-        deny_label: str = "❌ Deny",
-    ) -> int | None:
-        """Post an approval card.
-
-        ``text`` is the fully-rendered HTML card (built by ``agent.cards``).
-        The button labels are cosmetic — ``callback_data`` always carries the
-        action id as ``approve:``/``deny:``, so the webhook is unaffected by
-        whatever the buttons are called.
-        """
+    async def send_card(self, text: str, reply_markup: dict[str, Any] | None = None) -> int | None:
+        """Post a card (HTML text + optional inline keyboard). Returns message_id."""
         if not self.enabled:
             return None
-        markup = {
-            "inline_keyboard": [
-                [
-                    {"text": approve_label, "callback_data": f"approve:{action_id}"},
-                    {"text": deny_label, "callback_data": f"deny:{action_id}"},
-                ]
-            ]
+        payload: dict[str, Any] = {
+            "chat_id": self._chat_id,
+            "text": text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
         }
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
+        try:
+            data = await self._post("sendMessage", payload)
+            return data["result"]["message_id"]
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Telegram send_card failed: %s", exc)
+            return None
+
+    async def edit_card(
+        self, *, message_id: int, text: str, reply_markup: dict[str, Any] | None = None
+    ) -> None:
+        """Replace a card's text + keyboard in place (editMessageText). Best-effort."""
+        if not self.enabled:
+            return None
+        payload: dict[str, Any] = {
+            "chat_id": self._chat_id,
+            "message_id": message_id,
+            "text": text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+        }
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
+        try:
+            await self._post("editMessageText", payload)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Telegram edit_card failed: %s", exc)
+        return None
+
+    async def prompt_reply(self, text: str) -> int | None:
+        """Send a force-reply prompt to capture typed input. Returns its message_id."""
+        if not self.enabled:
+            return None
         try:
             data = await self._post(
                 "sendMessage",
@@ -109,13 +127,12 @@ class TelegramService:
                     "chat_id": self._chat_id,
                     "text": text,
                     "parse_mode": "HTML",
-                    "reply_markup": markup,
-                    "disable_web_page_preview": True,
+                    "reply_markup": {"force_reply": True},
                 },
             )
             return data["result"]["message_id"]
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Telegram send_approval_request failed: %s", exc)
+            logger.warning("Telegram prompt_reply failed: %s", exc)
             return None
 
     async def resolve_message(
