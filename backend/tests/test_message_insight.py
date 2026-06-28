@@ -353,3 +353,31 @@ class TestTranslateDraftErrorHandling:
             target_language="nl",
         )
         assert result is None
+
+
+class TestTranslateTo:
+    """translate_to extracts plain text even though _call_llm runs in JSON mode."""
+
+    @pytest.mark.asyncio
+    async def test_extracts_translated_text_from_json(self, monkeypatch):
+        svc = MessageInsightService()
+
+        async def fake_call(user_content, *, system_prompt):
+            return '{"translated_text": "Where is my parcel?"}'
+
+        monkeypatch.setattr(svc, "_call_llm", fake_call)
+        assert await svc.translate_to("Waar is mijn pakket?", "en") == "Where is my parcel?"
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_raw_when_not_json(self, monkeypatch):
+        svc = MessageInsightService()
+
+        async def fake_call(user_content, *, system_prompt):
+            return "Where is my parcel?"
+
+        monkeypatch.setattr(svc, "_call_llm", fake_call)
+        assert await svc.translate_to("Waar is mijn pakket?", "en") == "Where is my parcel?"
+
+    @pytest.mark.asyncio
+    async def test_empty_text_returns_none(self):
+        assert await MessageInsightService().translate_to("   ", "en") is None

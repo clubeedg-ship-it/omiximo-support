@@ -67,6 +67,19 @@ kubectl apply -k k8s/
 #                    -f k8s/20-api.yaml -f k8s/30-frontend.yaml
 ```
 
+## Register the Telegram webhook
+
+The operator console needs Telegram to deliver **both** `callback_query` (button
+taps) and `message` (slash commands + the force-reply ✏️ Edit flow). Register it
+reproducibly after the API is up:
+
+```bash
+kubectl exec -n omiximo-support deploy/api -c api -- python -m scripts.set_webhook
+```
+
+If `allowed_updates` is ever set to `['callback_query']` only, Edit and every
+`/command` silently break (the webhook never receives those updates).
+
 ## One-time migration from the old hostPath DB
 
 The previous `db` Deployment stored data on an unmanaged hostPath. To move onto

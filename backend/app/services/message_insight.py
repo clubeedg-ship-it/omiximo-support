@@ -95,8 +95,10 @@ No prose, no markdown fences, no explanation outside the JSON.
 _TRANSLATE_TO_SYSTEM_PROMPT = """\
 You are a professional translation engine for customer-support communications.
 Translate the user's text into the requested target language, preserving meaning,
-all commitments, and a professional, courteous tone. Output ONLY the translation
-— no notes, no quotes, no markdown, no JSON.
+all commitments, and a professional, courteous tone.
+
+Respond with ONLY a JSON object: {"translated_text": "<the translation>"}.
+No prose, no markdown fences.
 """
 
 
@@ -249,10 +251,16 @@ class MessageInsightService:
             raw = await self._call_llm(
                 user_content, system_prompt=_TRANSLATE_TO_SYSTEM_PROMPT
             )
-            return raw.strip()
         except Exception as exc:  # noqa: BLE001
             logger.warning("translate_to failed (non-blocking): %s", exc)
             return None
+        # _call_llm runs in JSON mode, so the reply is {"translated_text": "..."}.
+        # Fall back to the raw string if the model ignored the format.
+        try:
+            out = (json.loads(raw).get("translated_text") or "").strip()
+        except (json.JSONDecodeError, AttributeError, TypeError):
+            out = (raw or "").strip()
+        return out or None
 
     # ------------------------------------------------------------------ #
     # Internals                                                            #
