@@ -190,6 +190,10 @@ Each entry: date · id · title, then Decision / Rationale.
 **Decision:** Order facts, tracking, and invoice all derive from the single Mirakl order response — no external carrier (PostNL/MyParcel) or invoicing (EasyBill) integration. `connectors/mirakl.py` holds pure extractors `order_facts` / `tracking_facts` / `invoice_facts`; `Tracking`/`InvoiceConnector` take the account and slice the same order. Critically, `_LegacyMiraklClient.fetch_order` was calling `GET /api/orders/{id}` which returns **410** — real order data never loaded — now fixed to the OR11 list form `GET /api/orders?order_ids=`. Verified live: real orders return status/item/amount/carrier/tracking#/tracking_url/has_invoice.
 **Rationale:** One credential set already configured, one fetch per order, no new vendor integrations. The 410 fix is a go-live prerequisite — without it both the agent and the legacy template pipeline got empty order context. Full invoice PDF (Mirakl documents endpoint) and live carrier events are deferred.
 
+### 2026-06-28 · D-020 · Go-live: agent enabled on real threads, safety-gated
+**Decision:** Flipped `AGENT_ENABLED=true` + `AGENT_FAKE_MIRAKL=false` (omiximo-env secret). The agent now drafts REAL customer threads as human-gated approval cards. Before flipping, closed the critical gap that the agent path bypassed `safety_rules`: every `send_reply` is now validated, violations render a ⚠️ block, the Approve button is withheld (Edit/Deny only), edits re-validate, and the webhook refuses to approve flagged actions. `AUTO_SEND_ENABLED=False` unchanged — nothing sends without a human tap. Verified live: a real German draft posted for a real order; `R3 operator_required` was correctly caught and the card flagged. `register_webhook()` runs on startup (allowed_updates message+callback_query). Backlog not force-processed — only new Mirakl threads flow to the agent.
+**Rationale:** Everything safe was built + tested (492 backend tests) + deployed + live-verified. Refund/return agent actions are deliberately NOT built/enabled — they are financial + conflict with D-003 and require explicit sign-off and a safety-rules reconciliation.
+
 ---
 
 ## §C — Roadmap & open questions
@@ -244,22 +248,22 @@ Migrations: 001 initial → … → 007 thread_messages → 008 mirakl_message_i
 ```yaml
 as_of: 2026-06-28
 mode: >
-  Telegram operator console (D-018) + Phase 2 Mirakl connectors (D-019) BUILT,
-  DEPLOYED to k3s, and verified live. main clean at 5afc581 (+ this handoff), 487
-  backend tests pass (all TDD), migration 012 applied to the live DB. Agent still
-  gated off (AGENT_ENABLED=False) but now running AGENT_FAKE_MIRAKL=true. Live-
-  verified: 3 test-run cards posted + approved by the operator; Edit + Translate
-  work (after fixing webhook allowed_updates → message+callback_query and the
-  translate JSON-unwrap); real Mirakl order fetch fixed (410 → list endpoint) and
-  returns rich order/tracking/invoice facts.
+  LIVE (D-020). AGENT_ENABLED=true + AGENT_FAKE_MIRAKL=false on k3s — the agent
+  drafts REAL customer threads as human-gated approval cards (AUTO_SEND_ENABLED=
+  False, nothing sends without a tap). 492 backend tests pass (all TDD), migration
+  012 applied. Console (D-018) + Phase 2 Mirakl connectors (D-019) + safety-gating
+  of agent replies all built, deployed, live-verified. Live proof: a real German
+  draft posted for a real order; safety R3 (operator_required) correctly caught +
+  Approve withheld. Webhook auto-registers on startup (message+callback_query).
 what_matters: >
-  Everything is built and working in test mode. The ONE remaining decision is the
-  real go-live: set AGENT_ENABLED=true + AGENT_FAKE_MIRAKL=false so the agent
-  drafts REAL customer threads as approval cards (still human-gated, AUTO_SEND off).
+  System is live and self-running: the Mirakl poller ingests new threads → agent
+  drafts → safety check → approval card → operator taps Approve/Edit/Translate/Deny.
+  Watch the channel as real threads arrive. Refund/return actions are intentionally
+  NOT built (financial + D-003) — need explicit sign-off + safety reconciliation.
 next_actions:
-  - Go-live: flip AGENT_ENABLED=true + AGENT_FAKE_MIRAKL=false (update omiximo-env secret + restart api). Decide backlog: process the ~23 unclassified threads vs new-threads-only. Watch the first real cards.
-  - Phase 2 remainder: approve_return / issue_refund agent actions; invoice PDF via the Mirakl documents endpoint; live carrier events (optional, MyParcel) later.
-  - Optional console polish: edit escalation reasons, multi-operator claim-lock, auto-register webhook on startup.
+  - Monitor the first real agent cards in the channel; tune drafting/safety if needed.
+  - Optional refinements: skip drafting for operator_required threads upfront (currently drafted-then-R3-flagged, same as legacy); edit escalation reasons; multi-operator claim-lock; invoice PDF via Mirakl documents endpoint.
+  - When/if wanted (needs your sign-off): approve_return / issue_refund agent actions + safety_rules reconciliation; optional backlog reprocessing of existing PENDING threads.
 do_not:
   - Do not bump api replicas or switch to RollingUpdate (in-process schedulers → double-send). D-016.
   - Do not change NodePorts 30800/30173 (host nginx routing) or move Postgres off the PVC.

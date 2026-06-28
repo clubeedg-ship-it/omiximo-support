@@ -53,25 +53,26 @@ Retrieve a section: `sed -n '/^## §E/,/^## §F/p' PROJECT.md`
 > Hot state — overwritten at session close. YAML.
 ```yaml
 branch: main
-commit: 5afc581
+commit: 3e0ed40
 state: >
-  Telegram operator console (D-018) + Phase 2 Mirakl connectors (D-019) BUILT,
-  DEPLOYED to k3s, verified live. 487 backend tests pass (all TDD), migration 012
-  applied to the live DB. Agent gated off (AGENT_ENABLED=False), AGENT_FAKE_MIRAKL=
-  true. Console: dossier card (cards.py) + threaded history; router webhook; ✏️ Edit
-  (force-reply → re-render, telegram_sessions + context_json); 🌐 Translate (lang
-  picker → MessageInsightService.translate_to); /pending /thread /stats /help /status.
-  Phase 2: fetch_order 410 fixed (→ list endpoint); order/tracking/invoice facts all
-  from the Mirakl order (connectors/mirakl.py extractors), verified against real data.
-  Live fixes this session: webhook allowed_updates → [message,callback_query]
-  (scripts/set_webhook.py); translate_to JSON-unwrap.
+  LIVE (D-020): AGENT_ENABLED=true + AGENT_FAKE_MIRAKL=false on k3s — the agent
+  drafts REAL customer threads as human-gated approval cards (AUTO_SEND_ENABLED=
+  False; nothing sends without a tap). 492 backend tests pass (all TDD), migration
+  012 applied. Built+deployed+live-verified: console (D-018: dossier card + threaded
+  history, router webhook, ✏️ Edit, 🌐 Translate, /pending /thread /stats /help
+  /status); Phase 2 Mirakl connectors (D-019: fetch_order 410→list-endpoint fix,
+  order/tracking/invoice facts from the order); and SAFETY-GATING of agent replies
+  (safety_rules run on every send_reply → ⚠️ block + Approve withheld + re-validate
+  on edit + webhook approve-block). register_webhook() on startup keeps
+  allowed_updates=[message,callback_query]. Live proof: real German draft posted for
+  a real order; R3 operator_required correctly caught + flagged.
 next: >
-  ONE decision left — real go-live: set AGENT_ENABLED=true + AGENT_FAKE_MIRAKL=false
-  (update omiximo-env secret + restart api) so the agent drafts REAL threads as
-  approval cards (still human-gated). Decide backlog: ~23 unclassified vs new-only.
-  Then Phase 2 remainder: approve_return/issue_refund actions; invoice PDF via Mirakl
-  documents endpoint. Optional: edit escalation reasons, multi-operator claim-lock,
-  webhook auto-register on startup.
+  System is live and self-running (poller → agent draft → safety → approval card →
+  operator taps). Monitor first real cards. NOT built (need your sign-off — financial
+  + conflicts with D-003): approve_return / issue_refund actions + safety reconcil.
+  Optional refinements: skip drafting operator_required upfront; edit escalation
+  reasons; multi-operator claim-lock; invoice PDF via Mirakl documents endpoint;
+  backlog reprocessing of existing PENDING threads.
 blockers: []
 updated: 2026-06-28
 ```
