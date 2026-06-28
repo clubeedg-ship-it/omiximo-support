@@ -1,40 +1,24 @@
-"""Invoice connector — Phase 2 stub.
+"""Invoice connector — invoice presence + amount derived from the Mirakl order.
 
-This connector will integrate with EasyBill (and potentially other invoicing
-systems) to fetch invoice status and download links for order-related threads.
-
-Phase 2 implementation notes:
-- Authenticate with the EasyBill API using a per-account API key
-- Look up invoice by order reference (Mirakl order ID)
-- Return invoice_url, invoice_number, invoice_date, invoice_status
-- Cache responses to avoid repeated API calls within a single pipeline run
+All data flows through Mirakl: the order response exposes ``has_invoice`` and the
+total amount. Returns ``{}`` on any error so the pipeline never breaks. Fetching
+the full invoice PDF (Mirakl documents endpoint) is a later step.
 """
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
+from app.models.marketplace_account import MarketplaceAccount
 from app.services.connectors.base import ConnectorBase
-
-logger = logging.getLogger(__name__)
+from app.services.connectors.mirakl import fetch_raw_order, invoice_facts
 
 
 class InvoiceConnector(ConnectorBase):
-    """Phase 2 stub: invoice data context provider.
+    """Invoice context provider, sourced from the Mirakl order."""
 
-    When implemented, this connector will call EasyBill (or compatible
-    invoicing API) to retrieve invoice details for order-related messages.
-    """
+    def __init__(self, account: MarketplaceAccount) -> None:
+        self._account = account
 
     async def fetch_context(self, order_id: str) -> dict[str, Any]:
-        """Return empty context — invoice integration is Phase 2.
-
-        This stub ensures the pipeline does not break when InvoiceConnector
-        is registered; it simply contributes no additional context.
-        """
-        logger.debug(
-            "InvoiceConnector.fetch_context called for order %s — Phase 2 stub, returning {}",
-            order_id,
-        )
-        return {}
+        return invoice_facts(await fetch_raw_order(self._account, order_id))

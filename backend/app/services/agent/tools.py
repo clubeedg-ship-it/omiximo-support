@@ -145,9 +145,9 @@ async def _run_read_tool(ctx: ToolContext, name: str) -> dict[str, Any]:
     if name == "get_order":
         return await MiraklConnector(ctx.account).fetch_context(order_id)
     if name == "get_tracking":
-        return await TrackingConnector().fetch_context(order_id)
+        return await TrackingConnector(ctx.account).fetch_context(order_id)
     if name == "get_invoice":
-        return await InvoiceConnector().fetch_context(order_id)
+        return await InvoiceConnector(ctx.account).fetch_context(order_id)
     # search_knowledge
     language = (
         ctx.thread.customer_language.value

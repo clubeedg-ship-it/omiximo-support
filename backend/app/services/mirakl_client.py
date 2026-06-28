@@ -427,9 +427,14 @@ class _LegacyMiraklClient:
         return all_threads
 
     async def fetch_order(self, order_id: str) -> dict[str, Any]:
+        # Mirakl exposes orders via the list endpoint (OR11), not /api/orders/{id}
+        # (which returns 410). Query by order id and take the single match.
         self._assert_open()
-        response = await self._raw_request("GET", f"/api/orders/{order_id}")
-        return response.json()
+        response = await self._raw_request(
+            "GET", "/api/orders", params={"order_ids": order_id}
+        )
+        orders = response.json().get("orders", [])
+        return orders[0] if orders else {}
 
     async def send_reply(self, thread_id: str, body: str) -> dict[str, Any]:
         """Post a reply to a Mirakl thread using multipart/form-data.
