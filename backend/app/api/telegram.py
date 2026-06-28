@@ -130,11 +130,6 @@ async def _decide(
             )
         return {"ok": True}
 
-    # Defence in depth: never let a safety-flagged reply be approved as-is.
-    if (action.context_json or {}).get("safety"):
-        await telegram.answer_callback(callback_id, "Bewerk eerst — veiligheidswaarschuwing")
-        return {"ok": True}
-
     action.status = ActionStatus.APPROVED.value
     await db.flush()
     await telegram.answer_callback(callback_id, "Goedgekeurd ✅")
@@ -227,8 +222,7 @@ async def _translate(
     await telegram.answer_callback(callback_id, "Vertalen…")
     base, _ = await _render(db, action)
     translated = await MessageInsightService().translate_html(base, lang)
-    safety = (action.context_json or {}).get("safety") or None
-    markup = toolbar(action.action_type, action.id, "translated", flagged=bool(safety))
+    markup = toolbar(action.action_type, action.id, "translated")
     footer = f"\n\n🌐 <i>Vertaald naar {html.escape(_LANG_NAMES.get(lang, lang), quote=False)}</i>"
 
     if not action.telegram_message_id:
@@ -303,7 +297,7 @@ async def _render(
         edited_by=payload.get("edited_by"),
         safety_violations=safety,
     )
-    return text, toolbar(action.action_type, action.id, state, flagged=bool(safety))
+    return text, toolbar(action.action_type, action.id, state)
 
 
 # --------------------------------------------------------------------------- #

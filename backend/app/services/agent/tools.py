@@ -212,7 +212,8 @@ async def _propose_action(
         messages=messages,
         safety_violations=violations or None,
     )
-    markup = toolbar(action_type, action.id, "proposed", flagged=bool(violations))
+    # Warn-only: the ⚠️ shows in the card; Approve stays available (human decides).
+    markup = toolbar(action_type, action.id, "proposed")
     message_id = await ctx.telegram.send_card(text, markup)
     action.telegram_message_id = message_id
     await ctx.db.flush()

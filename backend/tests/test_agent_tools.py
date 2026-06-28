@@ -129,18 +129,17 @@ async def test_send_reply_card_includes_full_conversation_when_multi_message(
 
 
 @pytest.mark.asyncio
-async def test_send_reply_with_refund_promise_is_safety_flagged(db, sample_account, sample_thread):
+async def test_send_reply_with_refund_promise_warns_but_keeps_approve(db, sample_account, sample_thread):
     tg = FakeTelegram()
     ctx = ToolContext(db=db, thread=sample_thread, account=sample_account, telegram=tg)
     await execute_tool(ctx, "send_reply", {"body": "Geen zorgen, wij zullen het bedrag terugbetalen."})
 
     assert ctx.proposed_action.context_json["safety"]  # R1 refund promise detected
     text = tg.cards[0]["text"]
-    assert "Veiligheidswaarschuwing" in text
+    assert "Veiligheidswaarschuwing" in text  # ⚠️ warning shown
     datas = _button_datas(tg.cards[0]["reply_markup"])
-    assert f"approve:{ctx.proposed_action.id}" not in datas  # Approve withheld
+    assert f"approve:{ctx.proposed_action.id}" in datas  # warn-only: Approve still available
     assert f"edit:{ctx.proposed_action.id}" in datas
-    assert f"deny:{ctx.proposed_action.id}" in datas
 
 
 @pytest.mark.asyncio

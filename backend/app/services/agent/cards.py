@@ -61,14 +61,13 @@ def toolbar(
     state: str = "proposed",
     *,
     languages: list[tuple[str, str]] | None = None,
-    flagged: bool = False,
 ) -> dict[str, Any]:
     """Inline keyboard for a card in a given state.
 
     ``callback_data`` carries the action id (and language code for translation)
-    so the webhook router can dispatch without server-side state. ``flagged``
-    (a reply with safety violations) withholds Approve — the operator must Edit
-    it clean or Deny it; they cannot one-tap send dangerous content.
+    so the webhook router can dispatch without server-side state. Safety
+    violations are surfaced as a ⚠️ warning in the card body (warn-only) — the
+    operator always keeps Approve and decides.
     """
     aid = action_id
     if state == "editing":
@@ -79,16 +78,10 @@ def toolbar(
         rows.append([("🔙 Terug", f"back:{aid}")])
         return _kb(rows)
     if state == "translated":
-        approve_row = [] if flagged else [("✅ Approve", f"approve:{aid}")]
-        return _kb([approve_row + [("✏️ Edit", f"edit:{aid}")], [("🔙 Terug", f"back:{aid}")]])
+        return _kb([[("✅ Approve", f"approve:{aid}"), ("✏️ Edit", f"edit:{aid}")], [("🔙 Terug", f"back:{aid}")]])
     # proposed
     if action_type == "escalate":
         return _kb([[("⤴️ Escalate", f"approve:{aid}"), ("❌ Dismiss", f"deny:{aid}")]])
-    if flagged:
-        # Safety violations: no one-tap Approve — Edit it clean or Deny.
-        return _kb(
-            [[("✏️ Edit", f"edit:{aid}"), ("❌ Deny", f"deny:{aid}")], [("🌐 Translate", f"tr:{aid}")]]
-        )
     return _kb(
         [
             [("✅ Approve", f"approve:{aid}"), ("❌ Deny", f"deny:{aid}")],

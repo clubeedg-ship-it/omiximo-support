@@ -285,10 +285,5 @@ def test_safety_violations_render_warning_block():
     assert "⚠️" in card
     assert "Veiligheidswaarschuwing" in card
     assert "R1: refund promise detected" in card
-
-
-def test_toolbar_flagged_withholds_approve():
-    datas = _datas(toolbar("send_reply", "AID", "proposed", flagged=True))
-    assert "approve:AID" not in datas
-    assert "edit:AID" in datas
-    assert "deny:AID" in datas
+    # warn-only: the proposed toolbar still offers Approve
+    assert "approve:AID" in _datas(toolbar("send_reply", "AID", "proposed"))

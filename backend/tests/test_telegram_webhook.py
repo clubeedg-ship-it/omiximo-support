@@ -268,18 +268,23 @@ async def test_stats_command_reports_counts(unauthenticated_client, proposal, mo
 
 
 @pytest.mark.asyncio
-async def test_approve_blocked_when_safety_flagged(unauthenticated_client, db, proposal, monkeypatch):
+async def test_approve_proceeds_despite_safety_warning(unauthenticated_client, db, proposal, monkeypatch):
     monkeypatch.setattr(settings, "TELEGRAM_WEBHOOK_SECRET", "")
-    proposal.context_json = {"safety": ["R1: refund promise"]}
+    proposal.context_json = {"safety": ["R4: unverified delivery"]}
     await db.flush()
-    with patch("app.api.telegram.TelegramService") as tg_cls:
-        tg_cls.return_value.answer_callback = AsyncMock()
+    send_mock = AsyncMock(return_value={})
+    with patch("app.api.telegram.MiraklClient") as mock_cls:
+        client = MagicMock()
+        client.send_reply = send_mock
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
         resp = await unauthenticated_client.post(
             "/api/v1/telegram/webhook", json=_callback(proposal.id, "approve")
         )
     assert resp.status_code == 200
     refreshed = await db.get(AgentAction, proposal.id)
-    assert refreshed.status == ActionStatus.PROPOSED.value  # NOT executed while flagged
+    assert refreshed.status == ActionStatus.EXECUTED.value  # warn-only: a warning never blocks approve
+    send_mock.assert_awaited_once()
 
 
 @pytest.mark.asyncio
