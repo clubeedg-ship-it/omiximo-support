@@ -46,6 +46,23 @@ class AgentRunner:
     ) -> AgentAction | None:
         """Run the agent loop for one thread; return the proposed AgentAction."""
         ctx = ToolContext(db=db, thread=thread, account=account, telegram=self._telegram)
+
+        # Operator/marketplace messages are never auto-replied (D-003 / R3).
+        # Escalate immediately instead of drafting a customer reply that would
+        # only be safety-blocked — a clear escalation card, no wasted LLM call.
+        if getattr(thread, "operator_required", False):
+            await execute_tool(
+                ctx,
+                "escalate",
+                {"reason": "Operator-/marktplaatsbericht — handmatige afhandeling vereist."},
+            )
+            if ctx.proposed_action is not None:
+                await self._log(
+                    db, thread, "proposal_created",
+                    {"action_type": "escalate", "action_id": str(ctx.proposed_action.id)},
+                )
+            return ctx.proposed_action
+
         try:
             messages = await self._build_messages(db, thread, account)
         except Exception as exc:  # noqa: BLE001
