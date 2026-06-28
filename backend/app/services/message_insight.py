@@ -92,13 +92,12 @@ Respond with ONLY a JSON object with exactly these keys:
 No prose, no markdown fences, no explanation outside the JSON.
 """
 
-_TRANSLATE_TO_SYSTEM_PROMPT = """\
+_TRANSLATE_MANY_SYSTEM_PROMPT = """\
 You are a professional translation engine for customer-support communications.
-Translate the user's text into the requested target language, preserving meaning,
-all commitments, and a professional, courteous tone.
-
-Respond with ONLY a JSON object: {"translated_text": "<the translation>"}.
-No prose, no markdown fences.
+You receive a JSON object {"texts": ["...", "..."]}. Translate EACH string into
+the requested target language, preserving meaning, commitments, and a
+professional, courteous tone. Respond with ONLY {"translations": ["...", "..."]}
+— the SAME number of items, in the SAME order. No prose, no markdown fences.
 """
 
 
@@ -235,32 +234,39 @@ class MessageInsightService:
             )
             return None
 
-    async def translate_to(self, text: str, target_language: str) -> str | None:
-        """Translate arbitrary ``text`` into ``target_language`` (display-only).
+    async def translate_texts(
+        self, texts: list[str], target_language: str
+    ) -> list[str] | None:
+        """Translate a list of texts into ``target_language`` in one call.
 
-        Source-language-agnostic (unlike ``translate_draft``, which assumes an
-        English source) and returns plain text. Never raises — returns ``None``
-        on empty input or any failure, so the caller can treat it as best-effort.
+        Order- and length-preserving, source-language-agnostic, display-only.
+        Used to translate a whole card (every conversation turn + the reply) at
+        once. Never raises — returns ``None`` on empty input, failure, or a
+        shape mismatch, so the caller can treat it as best-effort.
         """
-        if not (text or "").strip():
+        items = [t or "" for t in texts]
+        if not any(t.strip() for t in items):
             return None
         if self._mock_mode:
-            return f"[{target_language}] {text}"
+            return [f"[{target_language}] {t}" for t in items]
         try:
-            user_content = f"Target language: {target_language}\n\nText:\n{text}"
+            user_content = (
+                f"Target language: {target_language}\n\n"
+                + json.dumps({"texts": items}, ensure_ascii=False)
+            )
             raw = await self._call_llm(
-                user_content, system_prompt=_TRANSLATE_TO_SYSTEM_PROMPT
+                user_content, system_prompt=_TRANSLATE_MANY_SYSTEM_PROMPT
             )
         except Exception as exc:  # noqa: BLE001
-            logger.warning("translate_to failed (non-blocking): %s", exc)
+            logger.warning("translate_texts failed (non-blocking): %s", exc)
             return None
-        # _call_llm runs in JSON mode, so the reply is {"translated_text": "..."}.
-        # Fall back to the raw string if the model ignored the format.
         try:
-            out = (json.loads(raw).get("translated_text") or "").strip()
+            out = json.loads(raw).get("translations")
         except (json.JSONDecodeError, AttributeError, TypeError):
-            out = (raw or "").strip()
-        return out or None
+            return None
+        if isinstance(out, list) and len(out) == len(items):
+            return [str(x) for x in out]
+        return None
 
     # ------------------------------------------------------------------ #
     # Internals                                                            #

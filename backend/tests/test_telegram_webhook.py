@@ -195,7 +195,9 @@ async def test_translate_flow_shows_picker_then_translation(unauthenticated_clie
         inst = tg_cls.return_value
         inst.answer_callback = AsyncMock()
         inst.edit_card = AsyncMock()
-        mi_cls.return_value.translate_to = AsyncMock(return_value="Where is my parcel?")
+        mi_cls.return_value.translate_texts = AsyncMock(
+            return_value=["Where is my parcel?", "Solved now."]
+        )
 
         # 1. tap 🌐 Translate → language picker
         r1 = await unauthenticated_client.post(
@@ -216,12 +218,13 @@ async def test_translate_flow_shows_picker_then_translation(unauthenticated_clie
         )
         assert r2.status_code == 200
         last = inst.edit_card.call_args
-        assert "Where is my parcel?" in last.kwargs["text"]
+        assert "Where is my parcel?" in last.kwargs["text"]  # translated conversation turn
+        assert "Solved now." in last.kwargs["text"]  # translated reply
         translated_datas = [
             b["callback_data"] for row in last.kwargs["reply_markup"]["inline_keyboard"] for b in row
         ]
         assert f"back:{proposal.id}" in translated_datas
-        mi_cls.return_value.translate_to.assert_awaited_once()
+        mi_cls.return_value.translate_texts.assert_awaited_once()
 
 
 @pytest.mark.asyncio

@@ -17,6 +17,7 @@ import html
 import logging
 import uuid
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy import delete, func, select
@@ -217,7 +218,7 @@ async def _start_translate(
 async def _translate(
     db: AsyncSession, telegram: TelegramService, callback_id: str, arg: str
 ) -> dict[str, bool]:
-    """Translate the proposed reply into the chosen language (display-only)."""
+    """Render the WHOLE card (conversation turns + reply) in the chosen language."""
     action_id_str, _, lang = arg.partition(":")
     action = await _load_proposed(db, action_id_str)
     if action is None or action.action_type != "send_reply":
@@ -225,23 +226,59 @@ async def _translate(
         return {"ok": True}
 
     await telegram.answer_callback(callback_id, "Vertalen…")
-    body = (action.payload_json or {}).get("body", "")
-    translated = await MessageInsightService().translate_to(body, lang)
-
-    base, _ = await _render(db, action)
-    if translated:
-        lang_name = _LANG_NAMES.get(lang, lang.upper())
-        block = (
-            f"\n\n🌐 <b>Vertaling — {html.escape(lang_name, quote=False)}</b>\n"
-            f"<blockquote>{html.escape(translated, quote=False)}</blockquote>"
+    thread = await db.get(SupportThread, action.thread_id)
+    facts = (action.context_json or {}).get("facts", {})
+    safety = (action.context_json or {}).get("safety") or None
+    rows = (
+        await db.execute(
+            select(ThreadMessage)
+            .where(ThreadMessage.thread_id == action.thread_id)
+            .order_by(ThreadMessage.sequence_number)
         )
+    ).scalars().all()
+    body = (action.payload_json or {}).get("body", "")
+
+    # Translate every conversation turn + the reply in one call (order preserved).
+    if rows:
+        sources = [m.body or "" for m in rows] + [body]
     else:
-        block = "\n\n🌐 <i>Vertaling niet beschikbaar</i>"
+        sources = [getattr(thread, "customer_message", "") or "", body]
+    translations = await MessageInsightService().translate_texts(sources, lang)
+
+    if translations and len(translations) == len(sources):
+        if rows:
+            tr_msgs = [
+                SimpleNamespace(
+                    author_type=m.author_type, author_name=m.author_name,
+                    created_at=m.created_at, body=translations[i],
+                )
+                for i, m in enumerate(rows)
+            ]
+        else:
+            tr_msgs = [
+                SimpleNamespace(
+                    author_type="CUSTOMER", author_name=None,
+                    created_at=None, body=translations[0],
+                )
+            ]
+        text = build_action_card(
+            action_type="send_reply",
+            thread=thread,
+            facts=facts,
+            body=translations[-1],
+            messages=tr_msgs,
+            safety_violations=safety,
+        )
+        text += f"\n\n🌐 <i>Vertaald naar {html.escape(_LANG_NAMES.get(lang, lang), quote=False)}</i>"
+    else:
+        text, _ = await _render(db, action)
+        text += "\n\n🌐 <i>Vertaling niet beschikbaar</i>"
+
     if action.telegram_message_id:
         await telegram.edit_card(
             message_id=action.telegram_message_id,
-            text=base + block,
-            reply_markup=toolbar(action.action_type, action.id, "translated"),
+            text=text,
+            reply_markup=toolbar(action.action_type, action.id, "translated", flagged=bool(safety)),
         )
     return {"ok": True}
 
