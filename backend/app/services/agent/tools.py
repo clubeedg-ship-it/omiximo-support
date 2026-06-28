@@ -18,10 +18,13 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.agent_action import ActionStatus, AgentAction
+from app.models.thread_message import ThreadMessage
+from app.services.agent.cards import build_action_card, button_labels
 from app.services.connectors.invoice import InvoiceConnector
 from app.services.connectors.mirakl import MiraklConnector
 from app.services.connectors.tracking import TrackingConnector
@@ -97,6 +100,8 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
 
 # Tool names that create a human-gated proposal rather than returning data.
 ACTION_TOOLS = {"send_reply", "escalate"}
+# Tool names that fetch facts the agent reasons over (and the card displays).
+READ_TOOLS = {"get_order", "get_tracking", "get_invoice", "search_knowledge"}
 
 
 @dataclass
@@ -108,11 +113,24 @@ class ToolContext:
     account: Any
     telegram: Any
     proposed_action: AgentAction | None = None
-    tool_log: list[dict[str, Any]] = field(default_factory=list)
+    # Latest result of each read tool, keyed by tool name. Populated as the
+    # agent gathers facts so the approval card can show what it knew.
+    facts: dict[str, Any] = field(default_factory=dict)
 
 
 async def execute_tool(ctx: ToolContext, name: str, args: dict[str, Any]) -> dict[str, Any]:
     """Run a tool by name. Read tools return data; action tools create proposals."""
+    if name in ACTION_TOOLS:
+        return await _propose_action(ctx, name, args)
+    if name in READ_TOOLS:
+        result = await _run_read_tool(ctx, name)
+        ctx.facts[name] = result
+        return result
+    return {"error": f"unknown tool {name}"}
+
+
+async def _run_read_tool(ctx: ToolContext, name: str) -> dict[str, Any]:
+    """Fetch facts for a read tool. Never raises — connectors return ``{}``."""
     order_id = ctx.thread.mirakl_order_id
 
     if settings.AGENT_FAKE_MIRAKL and name in ("get_order", "get_tracking", "get_invoice"):
@@ -130,27 +148,36 @@ async def execute_tool(ctx: ToolContext, name: str, args: dict[str, Any]) -> dic
         return await TrackingConnector().fetch_context(order_id)
     if name == "get_invoice":
         return await InvoiceConnector().fetch_context(order_id)
-    if name == "search_knowledge":
-        language = (
-            ctx.thread.customer_language.value
-            if getattr(ctx.thread, "customer_language", None) is not None
-            else None
+    # search_knowledge
+    language = (
+        ctx.thread.customer_language.value
+        if getattr(ctx.thread, "customer_language", None) is not None
+        else None
+    )
+    entries = await KnowledgeService().retrieve_for_draft(
+        ctx.db,
+        category=ctx.thread.category or "",
+        marketplace=ctx.account.marketplace,
+        language=language,
+    )
+    return {
+        "entries": [
+            {"title": getattr(e, "title", ""), "content": getattr(e, "content", "")}
+            for e in entries
+        ]
+    }
+
+
+async def _thread_messages(db: AsyncSession, thread_id: Any) -> list[ThreadMessage]:
+    """The thread's conversation turns, oldest first (for the card history)."""
+    rows = (
+        await db.execute(
+            select(ThreadMessage)
+            .where(ThreadMessage.thread_id == thread_id)
+            .order_by(ThreadMessage.sequence_number)
         )
-        entries = await KnowledgeService().retrieve_for_draft(
-            ctx.db,
-            category=ctx.thread.category or "",
-            marketplace=ctx.account.marketplace,
-            language=language,
-        )
-        return {
-            "entries": [
-                {"title": getattr(e, "title", ""), "content": getattr(e, "content", "")}
-                for e in entries
-            ]
-        }
-    if name in ACTION_TOOLS:
-        return await _propose_action(ctx, name, args)
-    return {"error": f"unknown tool {name}"}
+    ).scalars().all()
+    return list(rows)
 
 
 async def _propose_action(
@@ -167,15 +194,18 @@ async def _propose_action(
     ctx.db.add(action)
     await ctx.db.flush()
 
-    if action_type == "send_reply":
-        title = f"Reply ready — order {ctx.thread.mirakl_order_id}"
-        body = args.get("body", "")
-    else:
-        title = f"Escalation — order {ctx.thread.mirakl_order_id}"
-        body = args.get("reason", "")
-
+    body = args.get("body", "") if action_type == "send_reply" else args.get("reason", "")
+    messages = await _thread_messages(ctx.db, ctx.thread.id)
+    text = build_action_card(
+        action_type=action_type,
+        thread=ctx.thread,
+        facts=ctx.facts,
+        body=body,
+        messages=messages,
+    )
+    approve_label, deny_label = button_labels(action_type)
     message_id = await ctx.telegram.send_approval_request(
-        action_id=action.id, title=title, body=body
+        action_id=action.id, text=text, approve_label=approve_label, deny_label=deny_label
     )
     action.telegram_message_id = message_id
     await ctx.db.flush()

@@ -90,7 +90,8 @@ async def agent_test_run(
     await telegram.send_activity(
         f"🧪 <b>Test thread</b> — order {order['order_id']} ({account.marketplace})\n{customer_message}"
     )
-    await telegram.send_activity("🧠 Geclassificeerd: complaint · ORANGE · nl")
+    # Classification + order facts are now folded into the approval card itself
+    # (app.services.agent.cards), so no separate narration line for them here.
 
     action = await AgentRunner(telegram=telegram).run_for_thread(
         db, thread=thread, account=account

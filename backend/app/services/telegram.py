@@ -65,17 +65,27 @@ class TelegramService:
             return None
 
     async def send_approval_request(
-        self, *, action_id: uuid.UUID, title: str, body: str
+        self,
+        *,
+        action_id: uuid.UUID,
+        text: str,
+        approve_label: str = "✅ Approve",
+        deny_label: str = "❌ Deny",
     ) -> int | None:
-        """Post an Approve/Deny card. callback_data carries the action id."""
+        """Post an approval card.
+
+        ``text`` is the fully-rendered HTML card (built by ``agent.cards``).
+        The button labels are cosmetic — ``callback_data`` always carries the
+        action id as ``approve:``/``deny:``, so the webhook is unaffected by
+        whatever the buttons are called.
+        """
         if not self.enabled:
             return None
-        text = f"<b>{title}</b>\n\n{body}"
         markup = {
             "inline_keyboard": [
                 [
-                    {"text": "✅ Approve", "callback_data": f"approve:{action_id}"},
-                    {"text": "❌ Deny", "callback_data": f"deny:{action_id}"},
+                    {"text": approve_label, "callback_data": f"approve:{action_id}"},
+                    {"text": deny_label, "callback_data": f"deny:{action_id}"},
                 ]
             ]
         }
