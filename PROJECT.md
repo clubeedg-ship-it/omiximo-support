@@ -186,6 +186,10 @@ Each entry: date · id · title, then Decision / Rationale.
 **Decision:** Telegram is the operator console. The approval card is self-contained — classification + order/tracking/knowledge facts + full threaded conversation history (👤 Klant / 🧑‍💼 Wij quotes, newest marked, oldest collapsed into an expandable quote when long) + the proposed reply/escalation — with action-aware buttons (Approve/Deny vs Escalate/Dismiss). Card rendering is a pure, unit-tested module (`services/agent/cards.py`). The webhook is now a router that dispatches button callbacks + slash commands (`/help`, `/status`), acking taps via `answerCallbackQuery`. Roadmap in `docs/superpowers/plans/2026-06-28-telegram-operator-console.md`: F2 Edit draft → F3 Translate (language picker) → F4 cross-thread nav → F5 system cmds.
 **Rationale:** The reviewer must see everything they act on in one message, with prior conversation visible in-place. A router makes adding Edit/Translate/nav handlers clean instead of bolting onto a single-purpose webhook. `context_json` + `telegram_sessions` (migration 012) are deferred to F2 — only needed once cards re-render after the run.
 
+### 2026-06-28 · D-019 · Phase 2 connectors source everything from Mirakl (+ fetch_order 410 fix)
+**Decision:** Order facts, tracking, and invoice all derive from the single Mirakl order response — no external carrier (PostNL/MyParcel) or invoicing (EasyBill) integration. `connectors/mirakl.py` holds pure extractors `order_facts` / `tracking_facts` / `invoice_facts`; `Tracking`/`InvoiceConnector` take the account and slice the same order. Critically, `_LegacyMiraklClient.fetch_order` was calling `GET /api/orders/{id}` which returns **410** — real order data never loaded — now fixed to the OR11 list form `GET /api/orders?order_ids=`. Verified live: real orders return status/item/amount/carrier/tracking#/tracking_url/has_invoice.
+**Rationale:** One credential set already configured, one fetch per order, no new vendor integrations. The 410 fix is a go-live prerequisite — without it both the agent and the legacy template pipeline got empty order context. Full invoice PDF (Mirakl documents endpoint) and live carrier events are deferred.
+
 ---
 
 ## §C — Roadmap & open questions
@@ -240,22 +244,22 @@ Migrations: 001 initial → … → 007 thread_messages → 008 mirakl_message_i
 ```yaml
 as_of: 2026-06-28
 mode: >
-  Telegram operator console F0.5–F5 BUILT (D-018). main clean at 296dc22, 479
-  backend tests pass (all TDD), migration 011 applied — migration 012 written but
-  NOT yet applied to the live DB. Agent still gated off (AGENT_ENABLED=False),
-  running AGENT_FAKE_MIRAKL=true. Shipped: self-contained dossier card (cards.py)
-  with threaded conversation history; router webhook; ✏️ Edit via force-reply →
-  re-render (telegram_sessions + context_json); 🌐 Translate language-picker →
-  translated view (MessageInsightService.translate_to); /pending, /thread, /stats,
-  /help, /status. NOT yet deployed to k3s (running image predates all this) — so
-  not exercised against the live bot.
+  Telegram operator console (D-018) + Phase 2 Mirakl connectors (D-019) BUILT,
+  DEPLOYED to k3s, and verified live. main clean at 5afc581 (+ this handoff), 487
+  backend tests pass (all TDD), migration 012 applied to the live DB. Agent still
+  gated off (AGENT_ENABLED=False) but now running AGENT_FAKE_MIRAKL=true. Live-
+  verified: 3 test-run cards posted + approved by the operator; Edit + Translate
+  work (after fixing webhook allowed_updates → message+callback_query and the
+  translate JSON-unwrap); real Mirakl order fetch fixed (410 → list endpoint) and
+  returns rich order/tracking/invoice facts.
 what_matters: >
-  Console plan in docs/superpowers/plans/2026-06-28-telegram-operator-console.md.
-  All increments F0.5–F5 are coded + unit/integration tested. The remaining gap is
-  live acceptance: deploy to k3s, apply migration 012, fire test-runs, tap buttons.
+  Everything is built and working in test mode. The ONE remaining decision is the
+  real go-live: set AGENT_ENABLED=true + AGENT_FAKE_MIRAKL=false so the agent
+  drafts REAL customer threads as approval cards (still human-gated, AUTO_SEND off).
 next_actions:
-  - Deploy to k3s (Recreate, replicas:1), run `alembic upgrade head` (migration 012) on the live DB, fire the 3 test-run scenarios + exercise Edit/Translate/commands in the channel.
-  - Carried over: go-live decision (flip AGENT_ENABLED=true vs park backlog); Phase 2 get_tracking/get_invoice connectors + approve_return/issue_refund actions.
+  - Go-live: flip AGENT_ENABLED=true + AGENT_FAKE_MIRAKL=false (update omiximo-env secret + restart api). Decide backlog: process the ~23 unclassified threads vs new-threads-only. Watch the first real cards.
+  - Phase 2 remainder: approve_return / issue_refund agent actions; invoice PDF via the Mirakl documents endpoint; live carrier events (optional, MyParcel) later.
+  - Optional console polish: edit escalation reasons, multi-operator claim-lock, auto-register webhook on startup.
 do_not:
   - Do not bump api replicas or switch to RollingUpdate (in-process schedulers → double-send). D-016.
   - Do not change NodePorts 30800/30173 (host nginx routing) or move Postgres off the PVC.

@@ -53,24 +53,25 @@ Retrieve a section: `sed -n '/^## §E/,/^## §F/p' PROJECT.md`
 > Hot state — overwritten at session close. YAML.
 ```yaml
 branch: main
-commit: 296dc22
+commit: 5afc581
 state: >
-  Telegram operator console F0.5–F5 BUILT (D-018; plan in docs/superpowers/plans/
-  2026-06-28-telegram-operator-console.md). 479 backend tests pass (all TDD).
-  Agent still gated off (AGENT_ENABLED=False), running AGENT_FAKE_MIRAKL=true.
-  Shipped: self-contained dossier card (services/agent/cards.py) with threaded
-  conversation history; router webhook; ✏️ Edit via force-reply → re-render
-  (telegram_sessions + AgentAction.context_json, migration 012); 🌐 Translate
-  language-picker → translated view (MessageInsightService.translate_to); commands
-  /pending, /thread <order>, /stats, /help, /status; answerCallbackQuery acks.
-  NOT yet deployed to k3s and migration 012 NOT yet applied to the live DB — so
-  the console is not exercised against the live bot.
+  Telegram operator console (D-018) + Phase 2 Mirakl connectors (D-019) BUILT,
+  DEPLOYED to k3s, verified live. 487 backend tests pass (all TDD), migration 012
+  applied to the live DB. Agent gated off (AGENT_ENABLED=False), AGENT_FAKE_MIRAKL=
+  true. Console: dossier card (cards.py) + threaded history; router webhook; ✏️ Edit
+  (force-reply → re-render, telegram_sessions + context_json); 🌐 Translate (lang
+  picker → MessageInsightService.translate_to); /pending /thread /stats /help /status.
+  Phase 2: fetch_order 410 fixed (→ list endpoint); order/tracking/invoice facts all
+  from the Mirakl order (connectors/mirakl.py extractors), verified against real data.
+  Live fixes this session: webhook allowed_updates → [message,callback_query]
+  (scripts/set_webhook.py); translate_to JSON-unwrap.
 next: >
-  Live acceptance: deploy to k3s (Recreate, replicas:1), `alembic upgrade head`
-  (migration 012) on the live DB, fire the 3 fake test-run scenarios, and exercise
-  Edit/Translate/commands in the channel. Carried over: go-live flip
-  AGENT_ENABLED=true vs park backlog; Phase 2 get_tracking/get_invoice connectors
-  + approve_return/issue_refund.
+  ONE decision left — real go-live: set AGENT_ENABLED=true + AGENT_FAKE_MIRAKL=false
+  (update omiximo-env secret + restart api) so the agent drafts REAL threads as
+  approval cards (still human-gated). Decide backlog: ~23 unclassified vs new-only.
+  Then Phase 2 remainder: approve_return/issue_refund actions; invoice PDF via Mirakl
+  documents endpoint. Optional: edit escalation reasons, multi-operator claim-lock,
+  webhook auto-register on startup.
 blockers: []
 updated: 2026-06-28
 ```
