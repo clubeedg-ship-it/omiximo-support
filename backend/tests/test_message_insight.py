@@ -355,37 +355,27 @@ class TestTranslateDraftErrorHandling:
         assert result is None
 
 
-class TestTranslateTexts:
-    """translate_texts batches a whole card's texts into one order-preserving call."""
+class TestTranslateHtml:
+    """translate_html renders a whole HTML card in the target language, tags intact."""
 
     @pytest.mark.asyncio
-    async def test_extracts_translations_from_json(self, monkeypatch):
+    async def test_extracts_translated_html_from_json(self, monkeypatch):
         svc = MessageInsightService()
 
         async def fake_call(user_content, *, system_prompt):
-            return '{"translations": ["Where is my parcel?", "It ships today."]}'
+            return '{"translated": "<b>Order</b>\\n<blockquote>Where is my parcel?</blockquote>"}'
 
         monkeypatch.setattr(svc, "_call_llm", fake_call)
-        out = await svc.translate_texts(
-            ["Waar is mijn pakket?", "Het wordt vandaag verzonden."], "en"
+        out = await svc.translate_html(
+            "<b>Bestelling</b>\n<blockquote>Waar is mijn pakket?</blockquote>", "en"
         )
-        assert out == ["Where is my parcel?", "It ships today."]
+        assert out == "<b>Order</b>\n<blockquote>Where is my parcel?</blockquote>"
 
     @pytest.mark.asyncio
-    async def test_none_on_length_mismatch(self, monkeypatch):
-        svc = MessageInsightService()
-
-        async def fake_call(user_content, *, system_prompt):
-            return '{"translations": ["only one"]}'
-
-        monkeypatch.setattr(svc, "_call_llm", fake_call)
-        assert await svc.translate_texts(["a", "b"], "en") is None
+    async def test_mock_mode_prefixes(self):
+        out = await MessageInsightService(mock_mode=True).translate_html("<b>hi</b>", "en")
+        assert out == "[en] <b>hi</b>"
 
     @pytest.mark.asyncio
-    async def test_mock_mode_prefixes_each(self):
-        out = await MessageInsightService(mock_mode=True).translate_texts(["hallo", "doei"], "en")
-        assert out == ["[en] hallo", "[en] doei"]
-
-    @pytest.mark.asyncio
-    async def test_all_empty_returns_none(self):
-        assert await MessageInsightService().translate_texts(["", "  "], "en") is None
+    async def test_empty_returns_none(self):
+        assert await MessageInsightService().translate_html("   ", "en") is None

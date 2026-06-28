@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models.agent_action import AgentAction
 from app.models.agent_event import AgentEvent
+from app.models.support_thread import ReplyState
 from app.models.thread_message import MessageAuthorType, ThreadMessage
 from app.services.agent.tools import TOOL_SCHEMAS, ToolContext, execute_tool
 from app.services.telegram import TelegramService
@@ -62,6 +63,19 @@ class AgentRunner:
                     {"action_type": "escalate", "action_id": str(ctx.proposed_action.id)},
                 )
             return ctx.proposed_action
+
+        # Don't draft when we already replied (awaiting the customer) or the
+        # thread is resolved — there is nothing to respond to. Only NEEDS_REPLY
+        # threads get a draft.
+        if getattr(thread, "reply_state", None) in (
+            ReplyState.AWAITING_CUSTOMER.value,
+            ReplyState.RESOLVED.value,
+        ):
+            await self._log(
+                db, thread, "skipped",
+                {"reason": f"reply_state={thread.reply_state} — not awaiting our reply"},
+            )
+            return None
 
         try:
             messages = await self._build_messages(db, thread, account)

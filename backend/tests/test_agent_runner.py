@@ -87,6 +87,26 @@ async def test_operator_required_thread_escalates_without_drafting(
 
 
 @pytest.mark.asyncio
+async def test_awaiting_customer_thread_is_not_drafted(db, sample_account, sample_thread, monkeypatch):
+    from app.models.support_thread import ReplyState
+
+    sample_thread.reply_state = ReplyState.AWAITING_CUSTOMER.value
+    await db.flush()
+    called = {"chat": False}
+
+    async def fake_chat(self, messages, tools):
+        called["chat"] = True
+        return {"choices": [{"message": {"role": "assistant", "content": "nope"}}]}
+
+    monkeypatch.setattr(AgentRunner, "_chat", fake_chat)
+    action = await AgentRunner(telegram=FakeTelegram()).run_for_thread(
+        db, thread=sample_thread, account=sample_account
+    )
+    assert action is None  # nothing to respond to — we already replied
+    assert called["chat"] is False
+
+
+@pytest.mark.asyncio
 async def test_runner_proposes_reply_when_model_returns_plain_text(db, sample_account, sample_thread, monkeypatch):
     async def fake_chat(self, messages, tools):
         return {"choices": [{"message": {"role": "assistant", "content": "Directe oplossing."}}]}

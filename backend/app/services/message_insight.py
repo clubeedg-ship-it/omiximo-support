@@ -92,12 +92,18 @@ Respond with ONLY a JSON object with exactly these keys:
 No prose, no markdown fences, no explanation outside the JSON.
 """
 
-_TRANSLATE_MANY_SYSTEM_PROMPT = """\
-You are a professional translation engine for customer-support communications.
-You receive a JSON object {"texts": ["...", "..."]}. Translate EACH string into
-the requested target language, preserving meaning, commitments, and a
-professional, courteous tone. Respond with ONLY {"translations": ["...", "..."]}
-— the SAME number of items, in the SAME order. No prose, no markdown fences.
+_TRANSLATE_HTML_SYSTEM_PROMPT = """\
+You translate a Telegram message (Telegram-flavoured HTML) into a target language.
+Translate ALL human-readable text — labels, headings, the conversation, and the
+reply — into the target language.
+
+PRESERVE EXACTLY, do not translate or alter:
+- every HTML tag, e.g. <b> <i> <blockquote> </b> (keep them in place)
+- emoji, line breaks, and bullet characters (•, ⤷)
+- numbers, order ids, tracking numbers, URLs, and currency amounts
+
+Do not add or remove tags or lines. Respond with ONLY a JSON object
+{"translated": "<the fully translated HTML>"}. No prose, no markdown fences.
 """
 
 
@@ -234,39 +240,30 @@ class MessageInsightService:
             )
             return None
 
-    async def translate_texts(
-        self, texts: list[str], target_language: str
-    ) -> list[str] | None:
-        """Translate a list of texts into ``target_language`` in one call.
+    async def translate_html(self, html_text: str, target_language: str) -> str | None:
+        """Translate a whole Telegram HTML card into ``target_language``.
 
-        Order- and length-preserving, source-language-agnostic, display-only.
-        Used to translate a whole card (every conversation turn + the reply) at
-        once. Never raises — returns ``None`` on empty input, failure, or a
-        shape mismatch, so the caller can treat it as best-effort.
+        Translates every human-readable string (labels, conversation, reply)
+        while preserving the HTML tags, emoji, numbers, ids and URLs. Display-
+        only and best-effort — returns ``None`` on empty input or any failure.
         """
-        items = [t or "" for t in texts]
-        if not any(t.strip() for t in items):
+        if not (html_text or "").strip():
             return None
         if self._mock_mode:
-            return [f"[{target_language}] {t}" for t in items]
+            return f"[{target_language}] {html_text}"
         try:
-            user_content = (
-                f"Target language: {target_language}\n\n"
-                + json.dumps({"texts": items}, ensure_ascii=False)
-            )
+            user_content = f"Target language: {target_language}\n\nHTML:\n{html_text}"
             raw = await self._call_llm(
-                user_content, system_prompt=_TRANSLATE_MANY_SYSTEM_PROMPT
+                user_content, system_prompt=_TRANSLATE_HTML_SYSTEM_PROMPT
             )
         except Exception as exc:  # noqa: BLE001
-            logger.warning("translate_texts failed (non-blocking): %s", exc)
+            logger.warning("translate_html failed (non-blocking): %s", exc)
             return None
         try:
-            out = json.loads(raw).get("translations")
+            out = (json.loads(raw).get("translated") or "").strip()
         except (json.JSONDecodeError, AttributeError, TypeError):
-            return None
-        if isinstance(out, list) and len(out) == len(items):
-            return [str(x) for x in out]
-        return None
+            out = ""
+        return out or None
 
     # ------------------------------------------------------------------ #
     # Internals                                                            #

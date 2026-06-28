@@ -133,10 +133,14 @@ class TelegramService:
 
     async def edit_card(
         self, *, message_id: int, text: str, reply_markup: dict[str, Any] | None = None
-    ) -> None:
-        """Replace a card's text + keyboard in place (editMessageText). Best-effort."""
+    ) -> bool:
+        """Replace a card's text + keyboard in place (editMessageText). Best-effort.
+
+        Returns True on success, False on a no-op or API error (e.g. Telegram
+        rejecting malformed HTML) so callers can fall back.
+        """
         if not self.enabled:
-            return None
+            return False
         payload: dict[str, Any] = {
             "chat_id": self._chat_id,
             "message_id": message_id,
@@ -148,9 +152,10 @@ class TelegramService:
             payload["reply_markup"] = reply_markup
         try:
             await self._post("editMessageText", payload)
+            return True
         except Exception as exc:  # noqa: BLE001
             logger.warning("Telegram edit_card failed: %s", exc)
-        return None
+            return False
 
     async def prompt_reply(self, text: str) -> int | None:
         """Send a force-reply prompt to capture typed input. Returns its message_id."""
