@@ -64,6 +64,19 @@ class TelegramService:
             logger.warning("Telegram send_activity failed: %s", exc)
             return None
 
+    async def answer_callback(self, callback_id: str, text: str = "") -> None:
+        """Acknowledge a button tap so the client's spinner clears (best-effort)."""
+        if not self.enabled:
+            return None
+        payload: dict[str, Any] = {"callback_query_id": callback_id}
+        if text:
+            payload["text"] = text
+        try:
+            await self._post("answerCallbackQuery", payload)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Telegram answer_callback failed: %s", exc)
+        return None
+
     async def send_approval_request(
         self,
         *,

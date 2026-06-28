@@ -18,6 +18,7 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -41,7 +42,7 @@ async def telegram_webhook(
     x_telegram_bot_api_secret_token: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, bool]:
-    """Handle Telegram callback queries (Approve/Deny button taps)."""
+    """Route Telegram updates: button taps (callback_query) and slash commands."""
     if (
         settings.TELEGRAM_WEBHOOK_SECRET
         and x_telegram_bot_api_secret_token != settings.TELEGRAM_WEBHOOK_SECRET
@@ -49,33 +50,50 @@ async def telegram_webhook(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="bad secret token")
 
     update = await request.json()
-    callback = update.get("callback_query")
-    if not callback:
-        return {"ok": True}  # not a button press — ignore
+    telegram = TelegramService()
 
+    callback = update.get("callback_query")
+    if callback:
+        return await _handle_callback(db, telegram, callback)
+
+    message = update.get("message")
+    if message:
+        return await _handle_command(db, telegram, message)
+
+    return {"ok": True}
+
+
+async def _handle_callback(
+    db: AsyncSession, telegram: TelegramService, callback: dict
+) -> dict[str, bool]:
+    """Dispatch a button tap. Only approve:/deny: are wired today."""
+    callback_id = callback.get("id") or ""
     data = str(callback.get("data") or "")
     sender = callback.get("from") or {}
     decided_by = sender.get("username") or str(sender.get("id") or "telegram")
 
     decision, _, action_id_str = data.partition(":")
     if decision not in ("approve", "deny"):
+        await telegram.answer_callback(callback_id)
         return {"ok": True}
     try:
         action_id = uuid.UUID(action_id_str)
     except ValueError:
+        await telegram.answer_callback(callback_id)
         return {"ok": True}
 
     action = await db.get(AgentAction, action_id)
     if action is None or action.status != ActionStatus.PROPOSED.value:
+        await telegram.answer_callback(callback_id, "Al verwerkt")
         return {"ok": True}  # unknown or already decided — idempotent no-op
 
-    telegram = TelegramService()
     action.decided_by = decided_by
     action.decided_at = datetime.now(UTC)
 
     if decision == "deny":
         action.status = ActionStatus.DENIED.value
         await db.commit()
+        await telegram.answer_callback(callback_id, "Geweigerd")
         if action.telegram_message_id:
             await telegram.resolve_message(
                 message_id=action.telegram_message_id, decision="❌ Denied", footer=decided_by
@@ -85,8 +103,63 @@ async def telegram_webhook(
     # approve
     action.status = ActionStatus.APPROVED.value
     await db.flush()
+    await telegram.answer_callback(callback_id, "Goedgekeurd ✅")
     await _execute_action(db, action, telegram)
     return {"ok": True}
+
+
+async def _handle_command(
+    db: AsyncSession, telegram: TelegramService, message: dict
+) -> dict[str, bool]:
+    """Dispatch a slash command (e.g. /help, /status). Plain messages are ignored."""
+    text = (message.get("text") or "").strip()
+    entities = message.get("entities") or []
+    is_command = text.startswith("/") or any(
+        e.get("type") == "bot_command" and e.get("offset") == 0 for e in entities
+    )
+    if not is_command:
+        return {"ok": True}
+
+    cmd = text.split(maxsplit=1)[0].lstrip("/").split("@", 1)[0].lower()
+    handler = _COMMANDS.get(cmd)
+    if handler is not None:
+        await handler(db, telegram)
+    return {"ok": True}
+
+
+async def _cmd_help(db: AsyncSession, telegram: TelegramService) -> None:
+    await telegram.send_activity(
+        "🤖 <b>Omiximo Support — commando's</b>\n"
+        "/status — systeemstatus en schakelaars\n"
+        "/help — deze hulp\n\n"
+        "<b>Op een kaart:</b>\n"
+        "✅ Approve / ❌ Deny — verstuur of weiger het concept\n"
+        "⤴️ Escalate / ❌ Dismiss — escaleer naar een mens of negeer"
+    )
+
+
+async def _cmd_status(db: AsyncSession, telegram: TelegramService) -> None:
+    pending = (
+        await db.execute(
+            select(func.count())
+            .select_from(SupportThread)
+            .where(SupportThread.status == ThreadStatus.PENDING_REVIEW)
+        )
+    ).scalar_one()
+
+    def _flag(value: bool) -> str:
+        return "aan" if value else "uit"
+
+    await telegram.send_activity(
+        "⚙️ <b>Status</b>\n"
+        f"• Wachtend op review: <b>{pending}</b>\n"
+        f"• Agent: {_flag(settings.AGENT_ENABLED)} · "
+        f"Fake-Mirakl: {_flag(settings.AGENT_FAKE_MIRAKL)} · "
+        f"Auto-send: {_flag(settings.AUTO_SEND_ENABLED)}"
+    )
+
+
+_COMMANDS = {"help": _cmd_help, "status": _cmd_status}
 
 
 async def _execute_action(

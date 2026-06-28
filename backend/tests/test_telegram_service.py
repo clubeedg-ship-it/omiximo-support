@@ -56,6 +56,29 @@ async def test_approval_request_builds_inline_keyboard(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_answer_callback_posts_acknowledgement(monkeypatch):
+    captured = {}
+
+    async def fake_post(method, payload):
+        captured["method"] = method
+        captured["payload"] = payload
+        return {"ok": True, "result": True}
+
+    svc = TelegramService(token="t", chat_id="99")
+    monkeypatch.setattr(svc, "_post", fake_post)
+    await svc.answer_callback("cb-123", "Goedgekeurd")
+    assert captured["method"] == "answerCallbackQuery"
+    assert captured["payload"]["callback_query_id"] == "cb-123"
+    assert captured["payload"]["text"] == "Goedgekeurd"
+
+
+@pytest.mark.asyncio
+async def test_answer_callback_noop_without_token():
+    svc = TelegramService(token="", chat_id="")
+    assert await svc.answer_callback("x") is None
+
+
+@pytest.mark.asyncio
 async def test_approval_request_honours_custom_button_labels(monkeypatch):
     captured = {}
 
