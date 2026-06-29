@@ -25,7 +25,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models.agent_action import AgentAction
+from app.models.agent_action import ActionStatus, AgentAction
 from app.models.agent_event import AgentEvent
 from app.models.support_thread import ReplyState
 from app.models.thread_message import MessageAuthorType, ThreadMessage
@@ -48,21 +48,32 @@ class AgentRunner:
         """Run the agent loop for one thread; return the proposed AgentAction."""
         ctx = ToolContext(db=db, thread=thread, account=account, telegram=self._telegram)
 
-        # Operator/marketplace messages are never auto-replied (D-003 / R3).
-        # Escalate immediately instead of drafting a customer reply that would
-        # only be safety-blocked — a clear escalation card, no wasted LLM call.
-        if getattr(thread, "operator_required", False):
-            await execute_tool(
-                ctx,
-                "escalate",
-                {"reason": "Operator-/marktplaatsbericht — handmatige afhandeling vereist."},
-            )
-            if ctx.proposed_action is not None:
-                await self._log(
-                    db, thread, "proposal_created",
-                    {"action_type": "escalate", "action_id": str(ctx.proposed_action.id)},
+        # Dedup: never produce a second card for a thread that already has a
+        # proposed action. This is the hard guard against any reprocessing or
+        # concurrency flooding the channel with look-alike cards.
+        existing = (
+            await db.execute(
+                select(AgentAction)
+                .where(
+                    AgentAction.thread_id == thread.id,
+                    AgentAction.status == ActionStatus.PROPOSED.value,
                 )
-            return ctx.proposed_action
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            await self._log(db, thread, "skipped", {"reason": "thread already has a proposed action"})
+            return existing
+
+        # Operator/marketplace messages are not the agent's job — they are
+        # handled manually in the web UI. Skip silently (no card, no LLM call)
+        # to avoid flooding the channel with identical escalation cards.
+        if getattr(thread, "operator_required", False):
+            await self._log(
+                db, thread, "skipped",
+                {"reason": "operator_required — manual handling, no agent card"},
+            )
+            return None
 
         # Don't draft when we already replied (awaiting the customer) or the
         # thread is resolved — there is nothing to respond to. Only NEEDS_REPLY

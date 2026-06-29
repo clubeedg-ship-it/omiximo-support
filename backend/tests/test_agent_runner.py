@@ -68,7 +68,7 @@ async def test_runner_uses_tool_then_proposes_reply(db, sample_account, sample_t
 
 
 @pytest.mark.asyncio
-async def test_operator_required_thread_escalates_without_drafting(
+async def test_operator_required_thread_is_skipped_no_card(
     db, sample_account, operator_thread, monkeypatch
 ):
     called = {"chat": False}
@@ -81,9 +81,36 @@ async def test_operator_required_thread_escalates_without_drafting(
     action = await AgentRunner(telegram=FakeTelegram()).run_for_thread(
         db, thread=operator_thread, account=sample_account
     )
-    assert action is not None
-    assert action.action_type == "escalate"
-    assert called["chat"] is False  # never drafted a customer reply
+    assert action is None  # skipped: no draft, no escalation card — handled in the web UI
+    assert called["chat"] is False
+
+
+@pytest.mark.asyncio
+async def test_thread_with_existing_proposed_action_is_not_redrafted(
+    db, sample_account, sample_thread, monkeypatch
+):
+    import uuid as _uuid
+
+    from app.models.agent_action import ActionStatus, AgentAction
+
+    existing = AgentAction(
+        id=_uuid.uuid4(), thread_id=sample_thread.id, action_type="send_reply",
+        status=ActionStatus.PROPOSED.value, payload_json={"body": "earlier draft"},
+    )
+    db.add(existing)
+    await db.flush()
+    called = {"chat": False}
+
+    async def fake_chat(self, messages, tools):
+        called["chat"] = True
+        return {"choices": [{"message": {"role": "assistant", "content": "dup"}}]}
+
+    monkeypatch.setattr(AgentRunner, "_chat", fake_chat)
+    action = await AgentRunner(telegram=FakeTelegram()).run_for_thread(
+        db, thread=sample_thread, account=sample_account
+    )
+    assert action is not None and action.id == existing.id  # returns existing, no new card
+    assert called["chat"] is False
 
 
 @pytest.mark.asyncio
