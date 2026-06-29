@@ -248,7 +248,12 @@ Migrations: 001 initial → … → 007 thread_messages → 008 mirakl_message_i
 ```yaml
 as_of: 2026-06-28
 mode: >
-  LIVE (D-020), commit 3f02f14, 493 tests. Post-go-live UX fixes from live use:
+  LIVE (D-020), commit 2c6bcf0, 494 tests. FLOOD FIX: the agent now dedups (never
+  a 2nd card per thread with a proposed action) and SKIPS operator_required threads
+  silently (no card — handled in web UI). Root cause of the duplicate-looking
+  flood: backlog drain escalated ~70 operator threads into identical cards. 12
+  stray escalation cards were button-stripped + denied; agent re-enabled. Earlier
+  post-go-live fixes from live use:
   safety gating is WARN-ONLY (⚠️ always shows, Approve never withheld — operator
   decides, since every reply is human-reviewed and AUTO_SEND is off); operator
   threads ESCALATE instead of producing a blocked draft; the agent skips

@@ -53,9 +53,14 @@ Retrieve a section: `sed -n '/^## §E/,/^## §F/p' PROJECT.md`
 > Hot state — overwritten at session close. YAML.
 ```yaml
 branch: main
-commit: 3f02f14
+commit: 2c6bcf0
 state: >
-  Post-go-live UX fixes (493 tests): SAFETY GATING IS WARN-ONLY — the ⚠️ warning
+  FLOOD FIX (494 tests): the agent now (a) DEDUPS — never a 2nd card for a thread
+  with a proposed action; (b) SKIPS operator_required threads silently (no card —
+  handled in web UI); (c) skips AWAITING_CUSTOMER/RESOLVED. Cause of the flood: as
+  the backlog drained, ~70 operator threads each produced an identical escalation
+  card. 12 stray cards were button-stripped + denied. Agent re-enabled (live).
+  Earlier post-go-live fixes still apply (493→494 tests): SAFETY GATING IS WARN-ONLY — the ⚠️ warning
   always shows but Approve is never withheld (operator decides; AUTO_SEND off).
   Operator threads ESCALATE (not a blocked draft); agent skips AWAITING_CUSTOMER/
   RESOLVED threads; 🌐 Translate renders the WHOLE card (labels+facts+content) in
