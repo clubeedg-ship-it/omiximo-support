@@ -24,7 +24,7 @@ The operator sees an email-like inbox (dashboard) AND, with the agent, a Telegra
 |---|---|---|
 | Backend | FastAPI + SQLAlchemy 2.0 async + Pydantic v2 | Python 3.12; httpx for all outbound (OpenRouter, Telegram, Mirakl) |
 | Frontend | React 18 + Vite + Tailwind + shadcn/ui | TypeScript; built to static `dist/`, served by nginx |
-| Database | PostgreSQL 16 | Alembic migrations **at 011** |
+| Database | PostgreSQL 16 | Alembic migrations **at 012** |
 | LLM | OpenRouter API | Classifier: Mistral Nemo; Insight/SmartDraft: Gemini 2.5 Flash; Agent: `AGENT_MODEL` (Gemini 2.5 Flash, tool-calling) |
 | Auth | Clerk JWT (not configured) + dev bypass via email allowlist | Single-tenant; Telegram webhook auth is a secret-token header, not Clerk |
 | Infra | **k3s** (namespace `omiximo-support`) | api Deployment + db StatefulSet(PVC) + frontend Deployment; host nginx → NodePorts; NOT docker-compose |
@@ -43,12 +43,14 @@ The operator sees an email-like inbox (dashboard) AND, with the agent, a Telegra
 | `KnowledgeService` | `services/knowledge_service.py` | CRUD + retrieval for knowledge base entries |
 | `SafetyRules` | `services/safety_rules.py` | Hard-coded content validation before send |
 | `DraftPipeline` | `services/draft_pipeline.py` | Orchestrator: classify → (agent OR template) → validate; routes to the agent when `AGENT_ENABLED` |
-| `AgentRunner` | `services/agent/runner.py` | Tool-calling loop; thread-scoped memory; narrates steps to Telegram |
-| agent tools | `services/agent/tools.py` | Read tools (get_order/tracking/invoice, search_knowledge) + approval-gated send_reply/escalate |
+| `AgentRunner` | `services/agent/runner.py` | Tool-calling loop; thread-scoped memory. Guards first: DEDUP (skip if a `proposed` action exists), skip `operator_required`, skip `AWAITING_CUSTOMER`/`RESOLVED`. Narrates steps to Telegram |
+| agent tools | `services/agent/tools.py` | Read tools (get_order/tracking/invoice, search_knowledge) + approval-gated send_reply/escalate; runs WARN-ONLY safety on send_reply; snapshots facts+safety → `context_json` |
+| `cards` | `services/agent/cards.py` | Pure builder: dossier card (classification + facts + threaded conversation + reply/escalation + ⚠️ safety block) + state-aware `toolbar()` |
 | fake fixtures | `services/agent/fake_mirakl.py` | Example order data (real format) for `AGENT_FAKE_MIRAKL` test mode |
-| `TelegramService` | `services/telegram.py` | Activity posts + Approve/Deny inline cards; no-op without a token |
-| connectors | `services/connectors/{mirakl,tracking,invoice}.py` | Order context. `mirakl` is live; `tracking`/`invoice` are still `{}` stubs |
-| `MiraklClient` | `services/mirakl_client.py` | Mirakl API: fetch threads/orders, send replies (multipart/form-data) |
+| `TelegramService` | `services/telegram.py` | send_card / edit_card / prompt_reply / answer_callback / send_activity; `register_webhook()` (allowed_updates=message+callback_query) on startup; no-op without a token |
+| `MessageInsightService` | `services/message_insight.py` | Insight summary/translation + `translate_html` (whole-card, HTML-preserving translation) |
+| connectors | `services/connectors/{mirakl,tracking,invoice}.py` | ALL facts derived from ONE Mirakl order (`order_facts`/`tracking_facts`/`invoice_facts` in `mirakl.py`); no external carrier/invoicing APIs |
+| `MiraklClient` | `services/mirakl_client.py` | Mirakl API: fetch threads, fetch order (OR11 LIST `?order_ids=`), send replies (multipart/form-data) |
 | `text_clean` | `services/text_clean.py` | HTML stripping for email content |
 
 ### §A.4 — API endpoints
@@ -75,8 +77,8 @@ POST /api/v1/agent/test-run               — fire a synthetic thread through th
 |---|---|---|
 | `AUTO_SEND_ENABLED` | `False` | When False, ALL threads stay in PENDING_REVIEW for human approval |
 | `SLA_AUTO_ESCALATE_ENABLED` | `False` | When False, threads never auto-disappear from inbox |
-| `AGENT_ENABLED` | `False` | When True, non-RED threads are handled by the tool-calling agent (Telegram-gated) instead of the template path |
-| `AGENT_FAKE_MIRAKL` | `False` | Test mode: read tools return fake fixtures, sends simulated; enables `/agent/test-run`. **Currently True in the cluster for polishing.** |
+| `AGENT_ENABLED` | `False` (config) · **`True` in prod** | Non-RED threads handled by the tool-calling agent (Telegram-gated). **LIVE.** |
+| `AGENT_FAKE_MIRAKL` | `False` | Test mode: fake fixtures, simulated sends, enables `/agent/test-run`. **False in prod** (test-run 403). |
 | `AGENT_TELEGRAM_VERBOSE` | `True` | Narrate each tool call into the activity channel |
 | `AGENT_MODEL` / `AGENT_MAX_STEPS` | gemini-2.5-flash / 6 | Agent LLM + max tool-call iterations |
 
@@ -96,13 +98,23 @@ IaC lives in `k8s/` (committed). `kubectl apply -k k8s/`.
 - Images built locally (`docker build`) → imported into containerd (`k3s ctr images import`); `imagePullPolicy: IfNotPresent`, tag `:prod`. No registry.
 - Secrets created out-of-band: `omiximo-env` (app), `omiximo-db` (postgres). Never committed.
 
-### §A.8 — Autonomous agent (Phase 1)
+### §A.8 — Autonomous agent + operator console (LIVE)
 
-- `AgentRunner.run_for_thread` builds messages = system prompt + the thread's OWN `thread_messages` only (scoped memory — no cross-thread/global state), then loops up to `AGENT_MAX_STEPS` calling OpenRouter with `TOOL_SCHEMAS`.
-- Read tools (`get_order` live via connector / `get_tracking`,`get_invoice` stubs / `search_knowledge`) execute immediately and feed facts back. `send_reply`/`escalate` do NOT act — they persist an `agent_actions` row (`proposed`) and post a Telegram Approve/Deny card.
-- Every step → an `agent_event` row + (verbose) a Telegram narration line.
-- `POST /api/v1/telegram/webhook` handles the button: **approve** → execute `send_reply` via Mirakl (or simulate when `AGENT_FAKE_MIRAKL`), flip thread to `SENT_AUTO`, edit card to "✅ Sent"; **deny** → discard. Idempotent against Telegram retries.
-- Phase 1 = `send_reply` only. `approve_return`/`issue_refund` are Phase 2 (the gate + webhook dispatch are written generically to slot them in as new `action_type`s).
+**Runner.** `AgentRunner.run_for_thread` runs per non-RED thread when `AGENT_ENABLED`. Guards run first and short-circuit with NO card: (1) DEDUP — a thread that already has a `proposed` action is skipped; (2) `operator_required` → skipped (handled in the web UI); (3) `AWAITING_CUSTOMER`/`RESOLVED` → skipped (we already replied). Otherwise it builds messages = system prompt + the thread's OWN `thread_messages` (scoped memory) and loops up to `AGENT_MAX_STEPS` on OpenRouter with `TOOL_SCHEMAS`.
+
+**Tools.** All read facts come from ONE Mirakl order fetch: `get_order`/`get_tracking`/`get_invoice` = `order_facts`/`tracking_facts`/`invoice_facts` (`connectors/mirakl.py`), plus `search_knowledge`. `send_reply` runs `safety_rules` (**warn-only**), snapshots facts+violations to `agent_actions.context_json`, and posts a dossier card; `escalate` posts an escalation card. Nothing acts without a human tap. Every step → an `agent_event` row (+ optional narration).
+
+**Operator console** (`api/telegram.py` router + `cards.py`):
+- **Card** = one self-contained dossier: classification + order/tracking/knowledge facts + full threaded conversation history (👤 Klant / 🧑‍💼 Wij, newest marked; long threads collapse into an expandable quote) + the proposed reply/escalation + (if any) a ⚠️ safety-warning block.
+- **Buttons**: ✅ Approve / ❌ Deny / ✏️ Edit / 🌐 Translate (escalations: ⤴️ Escalate / ❌ Dismiss). Safety is warn-only — Approve is never withheld.
+- **✏️ Edit** → force-reply prompt → operator types → card re-renders with the new body (re-validated); tracked by a `telegram_sessions` row.
+- **🌐 Translate** → language picker → the WHOLE card (labels + facts + conversation + reply) translated via `translate_html` (HTML preserved; escaped-plain-text fallback) → 🔙 Back restores.
+- **Slash commands**: `/pending`, `/thread <order>`, `/stats`, `/status`, `/help`.
+- The webhook is a router dispatching callback verbs (approve/deny/edit/cancel/tr/trset/back) + bot commands + force-reply replies; taps acked via `answerCallbackQuery`. `register_webhook()` on startup keeps `allowed_updates=[message,callback_query]`.
+
+**Execution.** On **approve** → execute `send_reply` via Mirakl (simulated when `AGENT_FAKE_MIRAKL`), thread → `SENT_AUTO`, card resolved; **deny/dismiss** → discard. Idempotent against Telegram retries.
+
+**Phase 2 (done):** order/tracking/invoice facts all from Mirakl. **Not built:** `approve_return`/`issue_refund` (financial + conflicts with D-003 — need explicit sign-off + safety reconciliation). The gate + webhook dispatch are generic enough to slot new `action_type`s.
 
 ---
 
@@ -194,6 +206,10 @@ Each entry: date · id · title, then Decision / Rationale.
 **Decision:** Flipped `AGENT_ENABLED=true` + `AGENT_FAKE_MIRAKL=false` (omiximo-env secret). The agent now drafts REAL customer threads as human-gated approval cards. Before flipping, closed the critical gap that the agent path bypassed `safety_rules`: every `send_reply` is now validated, violations render a ⚠️ block, the Approve button is withheld (Edit/Deny only), edits re-validate, and the webhook refuses to approve flagged actions. `AUTO_SEND_ENABLED=False` unchanged — nothing sends without a human tap. Verified live: a real German draft posted for a real order; `R3 operator_required` was correctly caught and the card flagged. `register_webhook()` runs on startup (allowed_updates message+callback_query). Backlog not force-processed — only new Mirakl threads flow to the agent.
 **Rationale:** Everything safe was built + tested (492 backend tests) + deployed + live-verified. Refund/return agent actions are deliberately NOT built/enabled — they are financial + conflict with D-003 and require explicit sign-off and a safety-rules reconciliation.
 
+### 2026-06-29 · D-021 · Warn-only safety + flood guards (from live operation)
+**Decision:** Three refinements driven by real use. (1) **Safety is WARN-ONLY** on the agent path — `safety_rules` run on every `send_reply` and render a ⚠️ block (stored in `context_json`, re-validated on Edit), but Approve is **never withheld**. (2) **Flood guards** in the runner: skip `operator_required` (no card — web UI handles them), skip `AWAITING_CUSTOMER`/`RESOLVED`, and **DEDUP** (never a 2nd card for a thread with a `proposed` action). (3) **🌐 Translate** renders the WHOLE card via `translate_html` (HTML-preserving, plain-text fallback); the webhook `allowed_updates` must be `[message,callback_query]` (`register_webhook()` on startup + `scripts/set_webhook.py`).
+**Rationale:** Live testing showed operator threads escalating into ~identical cards flooded the channel as the backlog drained (~70 operator threads); strict safety-blocking made ordinary "where is my order" replies un-approvable (R4 fires on future-tense "will be delivered"); Translate covered only message bodies; and `message` updates weren't delivered, silently breaking commands + Edit. These make the console usable and quiet. Every reply is human-reviewed (AUTO_SEND off), so warn-only is safe.
+
 ---
 
 ## §C — Roadmap & open questions
@@ -231,14 +247,15 @@ marketplace_accounts: id, marketplace, shop_id, api_key_encrypted, base_url, sla
 support_threads: id, mirakl_thread_id, mirakl_order_id, marketplace_account_id(FK), customer_language, category, risk_level, status, operator_required, reply_state, customer_message, message_summary, translated_message, draft_summary, draft_translated, drafted_response, tracking_status, invoice_status, response_deadline, message_count, last_customer_message_at, last_activity_at, created_at, updated_at
 thread_messages: id, thread_id(FK), direction(INBOUND/OUTBOUND), author_type(CUSTOMER/SHOP_USER/OPERATOR/SYSTEM), author_name, mirakl_message_id, body, sequence_number, created_at
 audit_log: id, thread_id(FK), action, actor, detail_json, created_at
-agent_actions: id, thread_id(FK), action_type(send_reply/escalate), status(proposed/approved/denied/executed/failed), payload_json, telegram_message_id, decided_by, result_json, created_at, decided_at
-agent_events: id, thread_id(FK), event_type(thread_received/tool_call/tool_result/agent_message/proposal_created/action_executed/error), detail_json, created_at
+agent_actions: id, thread_id(FK), action_type(send_reply/escalate), status(proposed/approved/denied/executed/failed), payload_json, context_json(facts+safety snapshot for re-render), telegram_message_id, decided_by, result_json, created_at, decided_at
+agent_events: id, thread_id(FK), event_type(thread_received/tool_call/tool_result/agent_message/proposal_created/action_executed/skipped/error), detail_json, created_at
+telegram_sessions: id, chat_id, prompt_message_id(indexed), action_id(FK agent_actions), kind, created_at — transient "awaiting typed input" state for the ✏️ Edit force-reply flow
 response_templates: id, marketplace_account_id(FK nullable), category, language, template_body, is_active
 classification_flags: id, thread_id(FK), correct_category, correct_risk_level, correct_language, reason, reviewed, created_at
 knowledge_entries: id, entry_type, title, content, category_tags(JSON), marketplace_tags(JSON), language, is_active, created_at, updated_at
 ```
 
-Migrations: 001 initial → … → 007 thread_messages → 008 mirakl_message_id/author_name → 009 reply_state → 010 last_activity_at → **011 agent_actions + agent_events**.
+Migrations: 001 initial → … → 009 reply_state → 010 last_activity_at → 011 agent_actions + agent_events → **012 agent_actions.context_json + telegram_sessions**.
 
 ---
 
@@ -296,6 +313,8 @@ do_not:
 - 2026-06-12 — Full conversation history at ingestion + chat review page + backfill (534 messages); reply_state + last_activity_at; inbox 87→111; stopped per-poll audit spam
 - 2026-06-23 — **Reliability hardening + k8s IaC (D-014):** prod Dockerfiles (killed dev servers), `k8s/` manifests, Postgres StatefulSet on a PVC. Migrated off the hostPath DB, pruned 43.4M `message_filtered` audit rows (18GB → 10MB), 126 threads intact, full backup kept.
 - 2026-06-23 — **Autonomous agent Phase 1 (D-015/016/017):** tool-calling runner with thread-scoped memory; `agent_actions`/`agent_events` (migration 011); TelegramService + Approve/Deny webhook; pipeline integration; fake-Mirakl test harness. 447 backend tests. Telegram wired (bot, group `-5262705193`, webhook). Deployed gated off; a `test-run` produced a real order-aware Dutch reply as an Approve card.
+- 2026-06-28 — **Telegram operator console + go-live (D-018/019/020):** self-contained dossier card (`cards.py`) with threaded conversation history; webhook → router; ✏️ Edit (force-reply → re-render, `telegram_sessions` + `context_json`, migration 012); 🌐 Translate (language picker → whole-card `translate_html`); commands `/pending /thread /stats /help /status`; safety-gating of agent replies. Phase 2: fixed Mirakl `fetch_order` 410 (→ OR11 list endpoint) — order/tracking/invoice facts all from the one order. **Went LIVE** (`AGENT_ENABLED=true`, `AGENT_FAKE_MIRAKL=false`); verified with a real German draft (safety R3 caught an operator thread).
+- 2026-06-29 — **Live-operation fixes (D-021):** safety made WARN-ONLY (⚠️ shown, Approve never withheld); flood guards (skip `operator_required` — no card; skip `AWAITING_CUSTOMER`/`RESOLVED`; dedup one card per thread) after ~70 operator threads flooded the channel as the backlog drained; whole-card translation; webhook `allowed_updates=[message,callback_query]` auto-registered on startup. 494 backend tests.
 
 ### §F.2 — Durable lessons
 - Mirakl message API requires multipart/form-data, not JSON — cost 1233 failed auto-sends before discovery.
@@ -305,6 +324,11 @@ do_not:
 - Jinja2 StrictUndefined + missing defaults = silent failures — include all template vars.
 - HTML email content in Mirakl threads must be stripped before LLM calls.
 - Never hide UI columns because "only one value exists" — multi-marketplace product.
+- The agent path must run its OWN guards (safety validate, skip operator/already-answered threads, dedup) — the poller/pipeline WILL feed it operator, `AWAITING_CUSTOMER`, and re-fetched threads; without guards you flood the channel with look-alike cards (~70 operator threads did exactly this on 2026-06-29).
+- Telegram `setWebhook` `allowed_updates` is a silent trap: omitting `message` drops slash commands AND force-reply replies with no error. Register `[message, callback_query]` on startup so a redeploy can't regress it.
+- Mirakl single-order GET `/api/orders/{id}` returns **410** — use the OR11 list form `?order_ids=`; order/tracking/invoice facts all come from that one response (no external carrier/invoicing API).
+- Human-gated ≠ hard-blocked: when every reply is human-reviewed, safety should WARN (show ⚠️, keep Approve), not withhold approval — over-blocking (e.g. R4 firing on future-tense "will be delivered") makes the tool unusable.
+- LLM JSON-mode (`response_format=json_object`) wraps even "plain-text" prompts — parse the JSON field (e.g. translate whole HTML into `{"translated": ...}`) instead of expecting a bare string.
 - Collector must use Mirakl's `date_created`, not `datetime.now()`.
 - Don't present A/B/C menus — pick the best option and do it; the user wants autonomous execution.
 - **A per-event INSERT with no retention + autovacuum that never runs will silently reach tens of millions of rows / 18GB.** The `message_filtered` audit writer + an unvacuumed insert-only table did exactly this. Add retention/partitioning to any high-frequency log table; check `last_autovacuum`.

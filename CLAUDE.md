@@ -17,29 +17,34 @@ Retrieve a section: `sed -n '/^## §E/,/^## §F/p' PROJECT.md`
 ## 3. Vocabulary
 - `thread` = a Mirakl customer support conversation (one order, one or more messages)
 - `risk_level` = GREEN/ORANGE/RED — classifier output determining draft strategy
-- `safety_rules` = hard-coded invariants that block dangerous auto-replies (refund promises, external links, etc.)
+- `safety_rules` = content checks (R1 refund promise, R2 return approval, R3 operator auto-reply, R4 unverified delivery, R5 warranty rejection, R6 external routing). On the agent path they are **WARN-ONLY** (see §4).
 - `knowledge_entry` = company policy/FAQ/product info stored in DB, retrieved for LLM-augmented drafting
-- `smart_draft` = LLM-generated draft using knowledge + historical examples (ORANGE cases only) — the legacy, AGENT_ENABLED=False path
-- `template_draft` = slot-filled Jinja2 template response (GREEN cases, or reference for ORANGE)
+- `template_draft` / `smart_draft` = the legacy Jinja2-template + LLM draft path. Runs only when `AGENT_ENABLED=False`; superseded in production by the agent.
 - `message_filter` = ingestion-time filter that rejects outbound/system noise (invoice emails, Zoho notifications)
-- `operator_required` = boolean flag on threads forwarded by marketplace operators (MediaMarkt, Boulanger)
-- `agent` = the autonomous tool-calling support agent (`services/agent/`): pulls real order data via tools, writes the resolution itself as the rep, proposes ONE action gated by Telegram. Replaces template-first drafting when `AGENT_ENABLED=True`.
-- `agent_action` = a proposed agent action (`send_reply`/`escalate`) persisted as `proposed`, awaiting human Approve/Deny — the permission gate.
+- `operator_required` = flag on threads from the marketplace operator (MediaMarkt/Saturn, Boulanger). The agent SKIPS these — no card; handled in the web UI.
+- `agent` = the autonomous tool-calling support agent (`services/agent/`): pulls real order data via Mirakl tools, writes the reply itself as the rep, proposes ONE action gated by Telegram. **LIVE in production** (`AGENT_ENABLED=True`, `AGENT_FAKE_MIRAKL=false`) on real customer threads.
+- `agent_action` = a proposed agent action (`send_reply`/`escalate`) persisted as `proposed`, awaiting human Approve/Deny — the permission gate. `context_json` snapshots the gathered facts + safety violations so a card can be re-rendered (Edit/Translate).
 - `agent_event` = per-thread agent activity / tool-call timeline (its own table, kept out of `audit_log`).
-- `activity channel` = the Telegram group (bot `@omiximo_support_bot` → "Omiximo Support Activity Channel", chat `-5262705193`) where new-thread notices, tool-call narration, and Approve/Deny cards land.
-- `AGENT_FAKE_MIRAKL` = test/polish mode: read tools return fake order fixtures (real format), sends are simulated; powers `POST /api/v1/agent/test-run`.
+- `operator console` = the Telegram workflow (`api/telegram.py` router + `services/agent/cards.py`): ONE self-contained dossier card per proposed action — classification + order/tracking/knowledge facts + full threaded conversation history + the proposed reply/escalation — with buttons ✅ Approve / ❌ Deny / ✏️ Edit / 🌐 Translate (⤴️ Escalate / ❌ Dismiss for escalations), plus slash commands `/pending` `/thread <order>` `/stats` `/help` `/status`.
+- `telegram_session` = transient "awaiting typed input" row (`telegram_sessions` table) backing the ✏️ Edit force-reply flow.
+- `activity channel` = the Telegram group (bot `@omiximo_support_bot` → "Omiximo Support Activity Channel", chat `-5262705193`) where new-thread notices and approval cards land.
+- `AGENT_FAKE_MIRAKL` = test mode: read tools return fake fixtures, sends simulated; powers `POST /api/v1/agent/test-run`. **False in production** (test-run returns 403) — post a test card via an in-pod script that sets it True in-process.
 
 ## 4. Invariants
-- The autonomous agent NEVER sends, refunds, or acts without a human Approve in Telegram — every agent action is an `agent_actions` row executed only by the Approve/Deny webhook. `AGENT_ENABLED` defaults False (legacy template path runs unchanged when off).
+- The autonomous agent NEVER sends, refunds, or acts without a human Approve in Telegram — every agent action is an `agent_actions` row executed only by the Approve/Deny webhook. **Production is LIVE: `AGENT_ENABLED=True`, `AGENT_FAKE_MIRAKL=false`** (config defaults are both False).
 - ALL replies require human approval before sending (`AUTO_SEND_ENABLED=False`); threads NEVER auto-escalate or disappear (`SLA_AUTO_ESCALATE_ENABLED=False`).
+- Safety on the agent path is **WARN-ONLY**: `safety_rules.validate` runs on every `send_reply`, the ⚠️ warning shows on the card + is stored in `context_json` + re-validates on Edit — but Approve is **NEVER withheld** (the operator decides; every reply is human-reviewed). Safety never hides the draft.
+- The agent SKIPS (no card): `operator_required` threads (web UI handles them), `AWAITING_CUSTOMER`/`RESOLVED` threads (we already replied), and any thread that already has a `proposed` action (DEDUP). These guards prevent duplicate-looking card floods (root cause of the 2026-06-29 flood: ~70 operator threads each escalated into an identical card as the backlog drained).
+- The Telegram webhook `allowed_updates` MUST include BOTH `message` and `callback_query`. `register_webhook()` sets this on startup; `scripts/set_webhook.py` is the manual tool. Missing `message` silently breaks ALL slash commands and the ✏️ Edit force-reply flow.
+- Mirakl order fetch uses the OR11 LIST endpoint `GET /api/orders?order_ids=` — the single-id path `/api/orders/{id}` returns **410**. order/tracking/invoice facts all derive from that one order response (`connectors/mirakl.py`); no external carrier/invoicing APIs.
 - The API runs as a SINGLE process / k8s `replicas: 1` + `Recreate`: `app.main:app` starts in-process loops (mirakl_poller, auto_send_executor, sla_monitor). A second replica double-polls and double-sends — do not scale until the schedulers are extracted into their own worker.
 - Deploy is **k3s** (namespace `omiximo-support`), NOT docker-compose. Containers run production builds — no `uvicorn --reload`, no Vite dev server (it OOM-looped). Postgres is a StatefulSet on a PVC (local-path), never a hostPath.
 - Service NodePorts are pinned — api `30800`, frontend `30173` — because host nginx proxies the public domains to them. Never change them.
-- Secrets (Telegram token, DB creds, LLM key, Fernet key) live in the `omiximo-env` / `omiximo-db` k8s secrets — never in git; `k8s/secret.example.yaml` holds placeholders only.
-- Safety rules block dangerous content in drafts but never hide the draft from the reviewer.
+- Secrets (Telegram token, DB creds, LLM key, Fernet key) live in the `omiximo-env` / `omiximo-db` k8s secrets — never in git; flip flags with `kubectl patch secret omiximo-env` + rollout restart.
 - Every pipeline/agent decision gets an `audit_log` row; Mirakl API keys are Fernet-encrypted at rest.
 - The message filter blocks outbound/system noise at ingestion — not retroactively; it does NOT write an audit row per filtered message (that bug grew `audit_log` to 43M rows / 18GB).
-- HTML is stripped before LLM calls and in UI previews (`text_clean.py`, `stripHtml` util).
+- HTML is stripped before LLM calls + in UI previews (`text_clean.py`, `stripHtml`). 🌐 Translate renders the WHOLE card (labels + facts + conversation + reply) via `translate_html`, preserving HTML tags, with a plain-text fallback.
+- `approve_return` / `issue_refund` agent actions are deliberately NOT built — financial + conflict with D-003; require explicit sign-off + a safety-rules reconciliation.
 
 ## 5. Execution rules
 - ABSOLUTE code quality over speed. No hacks, no workarounds, no monkey patches.
